@@ -1,0 +1,12 @@
+{
+  "name": "postik-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "sh start.sh"
+  },
+  "dependencies": {
+    "express": "^4.19.0",
+    "puppeteer": "^23.0.0"
+  }
+}
