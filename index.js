@@ -99,8 +99,8 @@ app.post("/compose", async (req, res) => {
     await page.setContent(html, { waitUntil: "networkidle0", timeout: 60_000 });
     await page.evaluate(() => document.fonts.ready);                  // polices chargées
     await new Promise((r) => setTimeout(r, 150));                     // laisser le fit-to-width s'appliquer
-    const png = await page.screenshot({ type: "png" });
-    res.setHeader("content-type", "image/png");
+    const png = await page.screenshot({ type: "jpeg", quality: 92 });
+    res.setHeader("content-type", "image/jpeg");
     res.send(png);
   } catch (e) {
     console.error(e);
