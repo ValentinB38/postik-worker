@@ -101,7 +101,7 @@ app.post("/compose", async (req, res) => {
     await new Promise((r) => setTimeout(r, 150));                     // laisser le fit-to-width s'appliquer
     const png = await page.screenshot({ type: "jpeg", quality: 92 });
     res.setHeader("content-type", "image/jpeg");
-    res.send(png);
+    res.send(Buffer.from(png));
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "compose_failed", detail: String(e.message ?? e) });
