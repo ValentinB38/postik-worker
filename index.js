@@ -1,9 +1,9 @@
 // ============================================================
 // worker/index.js — Worker Postik (Railway)
-// Deux endpoints :
-//   POST /generate  { prompt, aspect_ratio, remove_bg }   -> { bg_url, cutout_url }
-//   POST /compose   { html, width, height }               -> PNG (binaire)
-// Sécurité : header  x-worker-key  (secret partagé avec les Edge Functions)
+//   POST /generate  { prompt, aspect_ratio }        -> { bg_url }
+//   POST /removebg  { image_url }                   -> { cutout_url }
+//   POST /compose   { html, width, height }         -> JPEG (binaire)
+// Sécurité : header x-worker-key
 // ============================================================
 
 import express from "express";
@@ -13,9 +13,8 @@ import puppeteer from "puppeteer";
 
 const exec = promisify(execFile);
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "3mb" }));
 
-// --- Auth simple par secret partagé ---
 app.use((req, res, next) => {
   if (req.headers["x-worker-key"] !== process.env.WORKER_KEY) {
     return res.status(401).json({ error: "unauthorized" });
@@ -28,12 +27,11 @@ async function hf(args) {
   const { stdout } = await exec("higgsfield", [...args, "--json"], {
     timeout: 180_000,
     env: process.env,
+    maxBuffer: 20 * 1024 * 1024,
   });
   const out = stdout.trim();
   try { return JSON.parse(out); } catch { return { raw: out }; }
 }
-
-/** Extrait la première URL https d'une sortie CLI (json ou texte). */
 function firstUrl(x) {
   const s = typeof x === "string" ? x : JSON.stringify(x);
   const m = s.match(/https:\/\/[^\s"']+\.(png|jpg|jpeg|webp)/i);
@@ -42,10 +40,9 @@ function firstUrl(x) {
 
 // ---------- POST /generate ----------
 app.post("/generate", async (req, res) => {
-  const { prompt, aspect_ratio = "4:5", remove_bg = false } = req.body ?? {};
+  const { prompt, aspect_ratio = "4:5" } = req.body ?? {};
   if (!prompt) return res.status(400).json({ error: "prompt requis" });
   try {
-    // Génération (nano_banana_pro = 2 crédits)
     const gen = await hf([
       "generate", "create", "nano_banana_pro",
       "--prompt", prompt,
@@ -54,25 +51,13 @@ app.post("/generate", async (req, res) => {
     ]);
     const bg_url = firstUrl(gen);
     if (!bg_url) return res.status(502).json({ error: "pas d'url dans la sortie", gen });
-
-    // Détourage optionnel (layout percée)
-    let cutout_url = null;
-    if (remove_bg) {
-      // Le détourage passe par les workflows CLI.
-      // `higgsfield workflow list --json` donne l'identifiant exact si celui-ci diffère.
-      try {
-        const cut = await hf(["workflow", "run", "remove_background", "--image-url", bg_url, "--wait"]);
-        cutout_url = firstUrl(cut);
-      } catch (e) {
-        console.error("remove_bg failed (non bloquant)", e.message);
-      }
-    }
-    res.json({ bg_url, cutout_url });
+    res.json({ bg_url, cutout_url: null });
   } catch (e) {
     console.error(e);
     res.status(502).json({ error: "generation_failed", detail: String(e.message ?? e) });
   }
 });
+
 // ---------- POST /removebg ----------
 app.post("/removebg", async (req, res) => {
   const { image_url } = req.body ?? {};
@@ -87,10 +72,8 @@ app.post("/removebg", async (req, res) => {
     res.status(502).json({ error: "removebg_failed", detail: String(e.message ?? e) });
   }
 });
+
 // ---------- POST /compose ----------
-// Reçoit du HTML autonome (template rempli côté Edge Function, étage 4)
-// et rend un PNG net aux dimensions exactes. Le fit-to-width mesuré tourne
-// dans la page elle-même (script inclus au template) avant la capture.
 let browser;
 async function getBrowser() {
   if (!browser) {
@@ -108,13 +91,13 @@ app.post("/compose", async (req, res) => {
   let page;
   try {
     page = await (await getBrowser()).newPage();
-    await page.setViewport({ width, height, deviceScaleFactor: 2 }); // rendu 2x pour le piqué
+    await page.setViewport({ width, height, deviceScaleFactor: 2 });
     await page.setContent(html, { waitUntil: "networkidle0", timeout: 60_000 });
-    await page.evaluate(() => document.fonts.ready);                  // polices chargées
-    await new Promise((r) => setTimeout(r, 150));                     // laisser le fit-to-width s'appliquer
-    const png = await page.screenshot({ type: "jpeg", quality: 92 });
+    await page.evaluate(() => document.fonts.ready);
+    await new Promise((r) => setTimeout(r, 200));
+    const img = await page.screenshot({ type: "jpeg", quality: 92 });
     res.setHeader("content-type", "image/jpeg");
-    res.send(Buffer.from(png));
+    res.send(Buffer.from(img));
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "compose_failed", detail: String(e.message ?? e) });
