@@ -73,7 +73,20 @@ app.post("/generate", async (req, res) => {
     res.status(502).json({ error: "generation_failed", detail: String(e.message ?? e) });
   }
 });
-
+// ---------- POST /removebg ----------
+app.post("/removebg", async (req, res) => {
+  const { image_url } = req.body ?? {};
+  if (!image_url) return res.status(400).json({ error: "image_url requis" });
+  try {
+    const cut = await hf(["workflow", "run", "remove_background", "--image-url", image_url, "--wait"]);
+    const cutout_url = firstUrl(cut);
+    if (!cutout_url) return res.status(502).json({ error: "pas de cutout", cut });
+    res.json({ cutout_url });
+  } catch (e) {
+    console.error(e);
+    res.status(502).json({ error: "removebg_failed", detail: String(e.message ?? e) });
+  }
+});
 // ---------- POST /compose ----------
 // Reçoit du HTML autonome (template rempli côté Edge Function, étage 4)
 // et rend un PNG net aux dimensions exactes. Le fit-to-width mesuré tourne
