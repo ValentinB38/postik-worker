@@ -23,19 +23,25 @@ app.use((req, res, next) => {
 });
 
 // ---------- Helpers CLI ----------
-async function hf(args) {
-  const { stdout } = await exec("higgsfield", [...args, "--json"], {
-    timeout: 180_000,
-    env: process.env,
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  const out = stdout.trim();
-  try { return JSON.parse(out); } catch { return { raw: out }; }
-}
-function firstUrl(x) {
-  const s = typeof x === "string" ? x : JSON.stringify(x);
-  const m = s.match(/https:\/\/[^\s"']+\.(png|jpg|jpeg|webp)/i);
-  return m ? m[0] : null;
+async function hf(args, tries = 3) {
+  for (let i = 1; i <= tries; i++) {
+    try {
+      const { stdout } = await exec("higgsfield", [...args, "--json"], {
+        timeout: 180_000, env: process.env, maxBuffer: 20 * 1024 * 1024,
+      });
+      const out = stdout.trim();
+      try { return JSON.parse(out); } catch { return { raw: out }; }
+    } catch (e) {
+      const msg = String(e.message ?? e);
+      const transient = /503|502|Service Unavailable|timeout|ECONNRESET/i.test(msg);
+      if (transient && i < tries) {
+        console.warn(`hf retry ${i}/${tries} dans 15s (${msg.slice(0,120)})`);
+        await new Promise((r) => setTimeout(r, 15000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 // ---------- POST /generate ----------
