@@ -1,9 +1,9 @@
 // ============================================================
-// worker/index.js — Worker Postik (Railway) — V3
-//   POST /generate  { prompt, aspect_ratio }              -> { bg_url }
-//   POST /typeset   { prompt, image_url, aspect_ratio }   -> { out_url }
-//   POST /removebg  { image_url }                         -> { cutout_url }
-//   POST /compose   { html, width, height }               -> JPEG (binaire)
+// worker/index.js — Worker Postik (Railway) — V4
+//   POST /generate  { prompt, aspect_ratio }                        -> { bg_url }
+//   POST /typeset   { prompt, image_url, logo_url?, aspect_ratio }  -> { out_url }
+//   POST /removebg  { image_url }                                   -> { cutout_url }
+//   POST /compose   { html, width, height }                         -> JPEG (binaire)
 // Sécurité : header x-worker-key
 // ============================================================
 
@@ -52,6 +52,12 @@ function firstUrl(x) {
   return m ? m[0] : null;
 }
 
+async function downloadTo(url, path) {
+  const dl = await fetch(url);
+  if (!dl.ok) throw new Error(`téléchargement impossible: ${url.slice(0, 80)}`);
+  await writeFile(path, Buffer.from(await dl.arrayBuffer()));
+}
+
 // ---------- POST /generate ----------
 app.post("/generate", async (req, res) => {
   const { prompt, aspect_ratio = "4:5" } = req.body ?? {};
@@ -73,24 +79,30 @@ app.post("/generate", async (req, res) => {
 });
 
 // ---------- POST /typeset ----------
-// Typographie posée par le modèle image : le fond est téléchargé en local
-// puis passé en --image-references (le flag n'accepte pas d'URL web).
+// Typographie posée par le modèle image.
+// Références locales : le fond (obligatoire) + le logo (optionnel).
 app.post("/typeset", async (req, res) => {
-  const { prompt, image_url, aspect_ratio = "4:5" } = req.body ?? {};
+  const { prompt, image_url, logo_url = null, aspect_ratio = "4:5" } = req.body ?? {};
   if (!prompt || !image_url) return res.status(400).json({ error: "prompt et image_url requis" });
-  const tmp = `/tmp/ref-${Date.now()}.png`;
+  const tmpBg = `/tmp/ref-bg-${Date.now()}.png`;
+  const tmpLogo = `/tmp/ref-logo-${Date.now()}.png`;
+  let logoOk = false;
   try {
-    const dl = await fetch(image_url);
-    if (!dl.ok) return res.status(400).json({ error: "référence inaccessible" });
-    await writeFile(tmp, Buffer.from(await dl.arrayBuffer()));
+    await downloadTo(image_url, tmpBg);
+    if (logo_url) {
+      try { await downloadTo(logo_url, tmpLogo); logoOk = true; }
+      catch (e) { console.warn("logo non téléchargé, on continue sans", e.message); }
+    }
 
-    const gen = await hf([
+    const args = [
       "generate", "create", "nano_banana_pro",
       "--prompt", prompt,
-      "--image-references", tmp,
-      "--aspect_ratio", aspect_ratio,
-      "--wait",
-    ]);
+      "--image-references", tmpBg,
+    ];
+    if (logoOk) args.push("--image-references", tmpLogo);
+    args.push("--aspect_ratio", aspect_ratio, "--wait");
+
+    const gen = await hf(args);
     const out_url = firstUrl(gen);
     if (!out_url) return res.status(502).json({ error: "pas d'url dans la sortie", gen });
     res.json({ out_url });
@@ -98,7 +110,8 @@ app.post("/typeset", async (req, res) => {
     console.error(e);
     res.status(502).json({ error: "typeset_failed", detail: String(e.message ?? e) });
   } finally {
-    unlink(tmp).catch(() => {});
+    unlink(tmpBg).catch(() => {});
+    unlink(tmpLogo).catch(() => {});
   }
 });
 
@@ -117,7 +130,7 @@ app.post("/removebg", async (req, res) => {
   }
 });
 
-// ---------- POST /compose ----------
+// ---------- POST /compose (conservé en secours) ----------
 let browser;
 async function getBrowser() {
   if (!browser) {
