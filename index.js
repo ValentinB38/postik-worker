@@ -1,14 +1,16 @@
 // ============================================================
-// worker/index.js — Worker Postik (Railway)
-//   POST /generate  { prompt, aspect_ratio }        -> { bg_url }
-//   POST /removebg  { image_url }                   -> { cutout_url }
-//   POST /compose   { html, width, height }         -> JPEG (binaire)
+// worker/index.js — Worker Postik (Railway) — V3
+//   POST /generate  { prompt, aspect_ratio }              -> { bg_url }
+//   POST /typeset   { prompt, image_url, aspect_ratio }   -> { out_url }
+//   POST /removebg  { image_url }                         -> { cutout_url }
+//   POST /compose   { html, width, height }               -> JPEG (binaire)
 // Sécurité : header x-worker-key
 // ============================================================
 
 import express from "express";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { writeFile, unlink } from "node:fs/promises";
 import puppeteer from "puppeteer";
 
 const exec = promisify(execFile);
@@ -35,7 +37,7 @@ async function hf(args, tries = 3) {
       const msg = String(e.message ?? e);
       const transient = /503|502|Service Unavailable|timeout|ECONNRESET/i.test(msg);
       if (transient && i < tries) {
-        console.warn(`hf retry ${i}/${tries} dans 15s (${msg.slice(0,120)})`);
+        console.warn(`hf retry ${i}/${tries} dans 15s (${msg.slice(0, 120)})`);
         await new Promise((r) => setTimeout(r, 15000));
         continue;
       }
@@ -43,11 +45,13 @@ async function hf(args, tries = 3) {
     }
   }
 }
+
 function firstUrl(x) {
   const s = typeof x === "string" ? x : JSON.stringify(x);
   const m = s.match(/https:\/\/[^\s"']+\.(png|jpg|jpeg|webp)/i);
   return m ? m[0] : null;
 }
+
 // ---------- POST /generate ----------
 app.post("/generate", async (req, res) => {
   const { prompt, aspect_ratio = "4:5" } = req.body ?? {};
@@ -65,6 +69,36 @@ app.post("/generate", async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(502).json({ error: "generation_failed", detail: String(e.message ?? e) });
+  }
+});
+
+// ---------- POST /typeset ----------
+// Typographie posée par le modèle image : le fond est téléchargé en local
+// puis passé en --image-references (le flag n'accepte pas d'URL web).
+app.post("/typeset", async (req, res) => {
+  const { prompt, image_url, aspect_ratio = "4:5" } = req.body ?? {};
+  if (!prompt || !image_url) return res.status(400).json({ error: "prompt et image_url requis" });
+  const tmp = `/tmp/ref-${Date.now()}.png`;
+  try {
+    const dl = await fetch(image_url);
+    if (!dl.ok) return res.status(400).json({ error: "référence inaccessible" });
+    await writeFile(tmp, Buffer.from(await dl.arrayBuffer()));
+
+    const gen = await hf([
+      "generate", "create", "nano_banana_pro",
+      "--prompt", prompt,
+      "--image-references", tmp,
+      "--aspect_ratio", aspect_ratio,
+      "--wait",
+    ]);
+    const out_url = firstUrl(gen);
+    if (!out_url) return res.status(502).json({ error: "pas d'url dans la sortie", gen });
+    res.json({ out_url });
+  } catch (e) {
+    console.error(e);
+    res.status(502).json({ error: "typeset_failed", detail: String(e.message ?? e) });
+  } finally {
+    unlink(tmp).catch(() => {});
   }
 });
 
