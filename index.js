@@ -43,7 +43,11 @@ async function hf(args, tries = 3) {
     }
   }
 }
-
+function firstUrl(x) {
+  const s = typeof x === "string" ? x : JSON.stringify(x);
+  const m = s.match(/https:\/\/[^\s"']+\.(png|jpg|jpeg|webp)/i);
+  return m ? m[0] : null;
+}
 // ---------- POST /generate ----------
 app.post("/generate", async (req, res) => {
   const { prompt, aspect_ratio = "4:5" } = req.body ?? {};
