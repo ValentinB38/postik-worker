@@ -1,10 +1,11 @@
 // ============================================================
-// worker/index.js — Worker Postik (Railway) — V4
-//   POST /generate  { prompt, aspect_ratio }                        -> { bg_url }
-//   POST /typeset   { prompt, image_url, logo_url?, aspect_ratio }  -> { out_url }
-//   POST /removebg  { image_url }                                   -> { cutout_url }
-//   POST /compose   { html, width, height }                         -> JPEG (binaire)
+// worker/index.js — Worker Postik (Railway) — V5
+//   POST /generate  { prompt, aspect_ratio }                       -> { bg_url }
+//   POST /typeset   { prompt, image_url, logo_url?, aspect_ratio } -> JPEG (binaire, logo composité)
+//   POST /removebg  { image_url }                                  -> { cutout_url }
+//   POST /compose   { html, width, height }                        -> JPEG (binaire)
 // Sécurité : header x-worker-key
+// PRÉREQUIS package.json : "sharp": "^0.33.0" dans dependencies
 // ============================================================
 
 import express from "express";
@@ -12,6 +13,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile, unlink } from "node:fs/promises";
 import puppeteer from "puppeteer";
+import sharp from "sharp";
 
 const exec = promisify(execFile);
 const app = express();
@@ -24,7 +26,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- Helpers CLI ----------
+// ---------- Helpers ----------
 async function hf(args, tries = 3) {
   for (let i = 1; i <= tries; i++) {
     try {
@@ -79,39 +81,63 @@ app.post("/generate", async (req, res) => {
 });
 
 // ---------- POST /typeset ----------
-// Typographie posée par le modèle image.
-// Références locales : le fond (obligatoire) + le logo (optionnel).
+// Typographie par le modèle image + LOGO COMPOSITÉ AU PIXEL PRÈS après coup.
+// Le modèle laisse le coin haut-droit vide ; on y colle le vrai PNG avec sharp.
+// Renvoie l'image finale en binaire (image/jpeg).
 app.post("/typeset", async (req, res) => {
   const { prompt, image_url, logo_url = null, aspect_ratio = "4:5" } = req.body ?? {};
   if (!prompt || !image_url) return res.status(400).json({ error: "prompt et image_url requis" });
   const tmpBg = `/tmp/ref-bg-${Date.now()}.png`;
-  const tmpLogo = `/tmp/ref-logo-${Date.now()}.png`;
-  let logoOk = false;
   try {
     await downloadTo(image_url, tmpBg);
-    if (logo_url) {
-      try { await downloadTo(logo_url, tmpLogo); logoOk = true; }
-      catch (e) { console.warn("logo non téléchargé, on continue sans", e.message); }
-    }
 
-    const args = [
+    const gen = await hf([
       "generate", "create", "nano_banana_pro",
       "--prompt", prompt,
       "--image-references", tmpBg,
-    ];
-    if (logoOk) args.push("--image-references", tmpLogo);
-    args.push("--aspect_ratio", aspect_ratio, "--wait");
-
-    const gen = await hf(args);
+      "--aspect_ratio", aspect_ratio,
+      "--wait",
+    ]);
     const out_url = firstUrl(gen);
     if (!out_url) return res.status(502).json({ error: "pas d'url dans la sortie", gen });
-    res.json({ out_url });
+
+    // Télécharger le rendu
+    const outRes = await fetch(out_url);
+    if (!outRes.ok) return res.status(502).json({ error: "rendu inaccessible" });
+    let baseBuf = Buffer.from(await outRes.arrayBuffer());
+
+    // Composite du logo exact (coin haut-droit, ~20% de la largeur)
+    if (logo_url) {
+      try {
+        const logoRes = await fetch(logo_url);
+        if (logoRes.ok) {
+          const meta = await sharp(baseBuf).metadata();
+          const W = meta.width ?? 1080, H = meta.height ?? 1350;
+          const logoBuf = await sharp(Buffer.from(await logoRes.arrayBuffer()))
+            .resize({ width: Math.round(W * 0.2) })
+            .png().toBuffer();
+          const logoMeta = await sharp(logoBuf).metadata();
+          baseBuf = await sharp(baseBuf).composite([{
+            input: logoBuf,
+            top: Math.round(H * 0.04),
+            left: Math.round(W - (logoMeta.width ?? 0) - W * 0.05),
+          }]).jpeg({ quality: 92 }).toBuffer();
+        }
+      } catch (e) {
+        console.warn("composite logo raté, rendu sans logo :", e.message);
+        baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
+      }
+    } else {
+      baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
+    }
+
+    res.setHeader("content-type", "image/jpeg");
+    res.send(baseBuf);
   } catch (e) {
     console.error(e);
     res.status(502).json({ error: "typeset_failed", detail: String(e.message ?? e) });
   } finally {
     unlink(tmpBg).catch(() => {});
-    unlink(tmpLogo).catch(() => {});
   }
 });
 
