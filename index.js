@@ -32,7 +32,7 @@ const GEMINI_MODELS = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image"];
 const geminiUrl = (model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
-async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 2) {
+async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 3) {
   const parts = [{ text: prompt }];
   for (const img of refImages) {
     parts.push({ inline_data: { mime_type: img.mime, data: img.b64 } });
@@ -45,63 +45,68 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
     },
   };
 
-  for (const model of GEMINI_MODELS) {
-    for (let i = 1; i <= tries; i++) {
-      let res;
-      try {
-        res = await fetch(geminiUrl(model), {
-          dispatcher: gAgent,
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-goog-api-key": process.env.GOOGLE_API_KEY,
-          },
-          body: JSON.stringify(body),
-        });
-      } catch (e) {
-        console.warn(`gemini ${model} réseau (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)}`);
-        if (i < tries) { await new Promise((r) => setTimeout(r, 10000)); continue; }
-        break; // modèle injoignable -> suivant
-      }
-
-      if (res.ok) {
-        // Flux SSE : on concatène les morceaux d'image (base64) dans l'ordre
-        const text = await res.text();
-        let b64 = "";
-        for (const line of text.split("\n")) {
-          const l = line.trim();
-          if (!l.startsWith("data:")) continue;
-          const payload = l.slice(5).trim();
-          if (!payload || payload === "[DONE]") continue;
-          try {
-            const chunk = JSON.parse(payload);
-            const partsOut = chunk?.candidates?.[0]?.content?.parts ?? [];
-            for (const p of partsOut) {
-              const d = p.inline_data?.data ?? p.inlineData?.data;
-              if (d) b64 += d;
-            }
-          } catch { /* morceau non-JSON, on ignore */ }
-        }
-        if (!b64) {
-          console.warn(`gemini ${model}: flux sans image (essai ${i}/${tries})`);
-          if (i < tries) { await new Promise((r) => setTimeout(r, 10000)); continue; }
+  for (let sweep = 1; sweep <= 2; sweep++) {
+    for (const model of GEMINI_MODELS) {
+      for (let i = 1; i <= tries; i++) {
+        let res;
+        try {
+          res = await fetch(geminiUrl(model), {
+            dispatcher: gAgent,
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-goog-api-key": process.env.GOOGLE_API_KEY,
+            },
+            body: JSON.stringify(body),
+          });
+        } catch (e) {
+          console.warn(`gemini ${model} réseau (essai ${i}/${tries}, passage ${sweep}): ${String(e.message ?? e).slice(0, 120)}`);
+          if (i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
           break;
         }
-        console.log(`gemini OK via ${model} (${Math.round(b64.length / 1024)} Ko b64)`);
-        return Buffer.from(b64, "base64");
-      }
 
-      const txt = await res.text();
-      const transient = [429, 500, 503].includes(res.status);
-      console.warn(`gemini ${model} ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 150)}`);
-      if (transient && i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
-      if (transient) break; // saturé -> modèle suivant
-      throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
+        if (res.ok) {
+          const text = await res.text();
+          const bufs = [];
+          for (const line of text.split("\n")) {
+            const l = line.trim();
+            if (!l.startsWith("data:")) continue;
+            const payload = l.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
+            try {
+              const chunk = JSON.parse(payload);
+              const partsOut = chunk?.candidates?.[0]?.content?.parts ?? [];
+              for (const p of partsOut) {
+                const d = p.inline_data?.data ?? p.inlineData?.data;
+                if (d) bufs.push(Buffer.from(d, "base64"));
+              }
+            } catch { /* morceau non-JSON */ }
+          }
+          if (!bufs.length) {
+            console.warn(`gemini ${model}: flux sans image (essai ${i}/${tries})`);
+            if (i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
+            break;
+          }
+          const out = Buffer.concat(bufs);
+          console.log(`gemini OK via ${model} (${Math.round(out.length / 1024)} Ko, passage ${sweep})`);
+          return out;
+        }
+
+        const txt = await res.text();
+        const transient = [429, 500, 503].includes(res.status);
+        console.warn(`gemini ${model} ${res.status} (essai ${i}/${tries}, passage ${sweep}): ${txt.slice(0, 150)}`);
+        if (transient && i < tries) { await new Promise((r) => setTimeout(r, 20000)); continue; }
+        if (transient) break;
+        throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
+      }
+    }
+    if (sweep === 1) {
+      console.warn("tous les modèles saturés -> pause 45s puis second passage");
+      await new Promise((r) => setTimeout(r, 45000));
     }
   }
   throw new Error("tous les modèles Gemini sont indisponibles — réessaie dans quelques minutes");
 }
-
 async function fetchAsB64(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`téléchargement impossible: ${url.slice(0, 80)}`);
