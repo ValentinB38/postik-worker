@@ -1,21 +1,20 @@
 // ============================================================
-// worker/index.js — Worker Postik (Railway) — V5
-//   POST /generate  { prompt, aspect_ratio }                       -> { bg_url }
+// worker/index.js — Worker Postik (Railway) — V6 « Gemini direct »
+// Fin de la CLI Higgsfield côté serveur : appels directs à l'API
+// Google Gemini (nano banana pro = gemini-3-pro-image-preview)
+// avec une vraie clé API stable.
+//   POST /generate  { prompt, aspect_ratio }                       -> JPEG (binaire)
 //   POST /typeset   { prompt, image_url, logo_url?, aspect_ratio } -> JPEG (binaire, logo composité)
-//   POST /removebg  { image_url }                                  -> { cutout_url }
-//   POST /compose   { html, width, height }                        -> JPEG (binaire)
+//   POST /compose   { html, width, height }                        -> JPEG (binaire, secours)
 // Sécurité : header x-worker-key
-// PRÉREQUIS package.json : "sharp": "^0.33.0" dans dependencies
+// Variables Railway requises : WORKER_KEY, GOOGLE_API_KEY
+// package.json : "sharp": "^0.33.0" dans dependencies
 // ============================================================
 
 import express from "express";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { writeFile, unlink } from "node:fs/promises";
 import puppeteer from "puppeteer";
 import sharp from "sharp";
 
-const exec = promisify(execFile);
 const app = express();
 app.use(express.json({ limit: "3mb" }));
 
@@ -26,38 +25,54 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- Helpers ----------
-async function hf(args, tries = 3) {
+// ---------- Appel Gemini (avec retry sur erreurs transitoires) ----------
+const GEMINI_MODEL = "gemini-3-pro-image-preview"; // nano banana pro
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 3) {
+  const parts = [{ text: prompt }];
+  for (const img of refImages) {
+    parts.push({ inline_data: { mime_type: img.mime, data: img.b64 } });
+  }
+  const body = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseModalities: ["IMAGE"],
+      imageConfig: { aspectRatio },
+    },
+  };
+
   for (let i = 1; i <= tries; i++) {
-    try {
-      const { stdout } = await exec("higgsfield", [...args, "--json"], {
-        timeout: 180_000, env: process.env, maxBuffer: 20 * 1024 * 1024,
-      });
-      const out = stdout.trim();
-      try { return JSON.parse(out); } catch { return { raw: out }; }
-    } catch (e) {
-      const msg = String(e.message ?? e);
-      const transient = /503|502|Service Unavailable|timeout|ECONNRESET/i.test(msg);
-      if (transient && i < tries) {
-        console.warn(`hf retry ${i}/${tries} dans 15s (${msg.slice(0, 120)})`);
-        await new Promise((r) => setTimeout(r, 15000));
-        continue;
-      }
-      throw e;
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": process.env.GOOGLE_API_KEY,
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const partsOut = data?.candidates?.[0]?.content?.parts ?? [];
+      const imgPart = partsOut.find((p) => p.inline_data?.data || p.inlineData?.data);
+      const b64 = imgPart?.inline_data?.data ?? imgPart?.inlineData?.data;
+      if (!b64) throw new Error("réponse Gemini sans image: " + JSON.stringify(data).slice(0, 300));
+      return Buffer.from(b64, "base64");
     }
+    const txt = await res.text();
+    const transient = [429, 500, 503].includes(res.status);
+    console.warn(`gemini ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 200)}`);
+    if (transient && i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
+    throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
   }
 }
 
-function firstUrl(x) {
-  const s = typeof x === "string" ? x : JSON.stringify(x);
-  const m = s.match(/https:\/\/[^\s"']+\.(png|jpg|jpeg|webp)/i);
-  return m ? m[0] : null;
-}
-
-async function downloadTo(url, path) {
-  const dl = await fetch(url);
-  if (!dl.ok) throw new Error(`téléchargement impossible: ${url.slice(0, 80)}`);
-  await writeFile(path, Buffer.from(await dl.arrayBuffer()));
+async function fetchAsB64(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`téléchargement impossible: ${url.slice(0, 80)}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  const mime = r.headers.get("content-type")?.split(";")[0] ?? "image/png";
+  return { b64: buf.toString("base64"), mime, buf };
 }
 
 // ---------- POST /generate ----------
@@ -65,15 +80,10 @@ app.post("/generate", async (req, res) => {
   const { prompt, aspect_ratio = "4:5" } = req.body ?? {};
   if (!prompt) return res.status(400).json({ error: "prompt requis" });
   try {
-    const gen = await hf([
-      "generate", "create", "nano_banana_pro",
-      "--prompt", prompt,
-      "--aspect_ratio", aspect_ratio,
-      "--wait",
-    ]);
-    const bg_url = firstUrl(gen);
-    if (!bg_url) return res.status(502).json({ error: "pas d'url dans la sortie", gen });
-    res.json({ bg_url, cutout_url: null });
+    const raw = await geminiImage({ prompt, aspectRatio: aspect_ratio });
+    const jpeg = await sharp(raw).jpeg({ quality: 95 }).toBuffer();
+    res.setHeader("content-type", "image/jpeg");
+    res.send(jpeg);
   } catch (e) {
     console.error(e);
     res.status(502).json({ error: "generation_failed", detail: String(e.message ?? e) });
@@ -81,48 +91,32 @@ app.post("/generate", async (req, res) => {
 });
 
 // ---------- POST /typeset ----------
-// Typographie par le modèle image + LOGO COMPOSITÉ AU PIXEL PRÈS après coup.
-// Le modèle laisse le coin haut-droit vide ; on y colle le vrai PNG avec sharp.
-// Renvoie l'image finale en binaire (image/jpeg).
+// Typographie par Gemini (fond en référence) + LOGO COMPOSITÉ au pixel près.
 app.post("/typeset", async (req, res) => {
   const { prompt, image_url, logo_url = null, aspect_ratio = "4:5" } = req.body ?? {};
   if (!prompt || !image_url) return res.status(400).json({ error: "prompt et image_url requis" });
-  const tmpBg = `/tmp/ref-bg-${Date.now()}.png`;
   try {
-    await downloadTo(image_url, tmpBg);
-
-    const gen = await hf([
-      "generate", "create", "nano_banana_pro",
-      "--prompt", prompt,
-      "--image-references", tmpBg,
-      "--aspect_ratio", aspect_ratio,
-      "--wait",
-    ]);
-    const out_url = firstUrl(gen);
-    if (!out_url) return res.status(502).json({ error: "pas d'url dans la sortie", gen });
-
-    // Télécharger le rendu
-    const outRes = await fetch(out_url);
-    if (!outRes.ok) return res.status(502).json({ error: "rendu inaccessible" });
-    let baseBuf = Buffer.from(await outRes.arrayBuffer());
+    const bg = await fetchAsB64(image_url);
+    const raw = await geminiImage({
+      prompt,
+      refImages: [{ mime: bg.mime, b64: bg.b64 }],
+      aspectRatio: aspect_ratio,
+    });
+    let baseBuf = raw;
 
     // Composite du logo exact (coin haut-droit, ~20% de la largeur)
     if (logo_url) {
       try {
-        const logoRes = await fetch(logo_url);
-        if (logoRes.ok) {
-          const meta = await sharp(baseBuf).metadata();
-          const W = meta.width ?? 1080, H = meta.height ?? 1350;
-          const logoBuf = await sharp(Buffer.from(await logoRes.arrayBuffer()))
-            .resize({ width: Math.round(W * 0.2) })
-            .png().toBuffer();
-          const logoMeta = await sharp(logoBuf).metadata();
-          baseBuf = await sharp(baseBuf).composite([{
-            input: logoBuf,
-            top: Math.round(H * 0.04),
-            left: Math.round(W - (logoMeta.width ?? 0) - W * 0.05),
-          }]).jpeg({ quality: 92 }).toBuffer();
-        }
+        const logo = await fetchAsB64(logo_url);
+        const meta = await sharp(baseBuf).metadata();
+        const W = meta.width ?? 1080, H = meta.height ?? 1350;
+        const logoBuf = await sharp(logo.buf).resize({ width: Math.round(W * 0.2) }).png().toBuffer();
+        const logoMeta = await sharp(logoBuf).metadata();
+        baseBuf = await sharp(baseBuf).composite([{
+          input: logoBuf,
+          top: Math.round(H * 0.04),
+          left: Math.round(W - (logoMeta.width ?? 0) - W * 0.05),
+        }]).jpeg({ quality: 92 }).toBuffer();
       } catch (e) {
         console.warn("composite logo raté, rendu sans logo :", e.message);
         baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
@@ -136,27 +130,10 @@ app.post("/typeset", async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(502).json({ error: "typeset_failed", detail: String(e.message ?? e) });
-  } finally {
-    unlink(tmpBg).catch(() => {});
   }
 });
 
-// ---------- POST /removebg ----------
-app.post("/removebg", async (req, res) => {
-  const { image_url } = req.body ?? {};
-  if (!image_url) return res.status(400).json({ error: "image_url requis" });
-  try {
-    const cut = await hf(["workflow", "run", "remove_background", "--image-url", image_url, "--wait"]);
-    const cutout_url = firstUrl(cut);
-    if (!cutout_url) return res.status(502).json({ error: "pas de cutout", cut });
-    res.json({ cutout_url });
-  } catch (e) {
-    console.error(e);
-    res.status(502).json({ error: "removebg_failed", detail: String(e.message ?? e) });
-  }
-});
-
-// ---------- POST /compose (conservé en secours) ----------
+// ---------- POST /compose (secours, inchangé) ----------
 let browser;
 async function getBrowser() {
   if (!browser) {
@@ -189,7 +166,7 @@ app.post("/compose", async (req, res) => {
   }
 });
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/health", (_req, res) => res.json({ ok: true, engine: "gemini" }));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Worker Postik sur :${port}`));
+app.listen(port, () => console.log(`Worker Postik (Gemini) sur :${port}`));
