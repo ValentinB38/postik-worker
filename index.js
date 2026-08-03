@@ -110,6 +110,50 @@ async function fetchAsB64(url) {
   return { b64: buf.toString("base64"), mime, buf };
 }
 
+// ---------- POST /poster ----------
+// AFFICHE COMPLÈTE en UNE génération (image + typographie ensemble).
+// ref_url (optionnel) : photo du client passée en référence.
+// logo_url (optionnel) : composité au pixel près après coup.
+app.post("/poster", async (req, res) => {
+  const { prompt, ref_url = null, logo_url = null, aspect_ratio = "4:5" } = req.body ?? {};
+  if (!prompt) return res.status(400).json({ error: "prompt requis" });
+  try {
+    const refImages = [];
+    if (ref_url) {
+      const ref = await fetchAsB64(ref_url);
+      refImages.push({ mime: ref.mime, b64: ref.b64 });
+    }
+    const raw = await geminiImage({ prompt, refImages, aspectRatio: aspect_ratio });
+    let baseBuf = raw;
+
+    if (logo_url) {
+      try {
+        const logo = await fetchAsB64(logo_url);
+        const meta = await sharp(baseBuf).metadata();
+        const W = meta.width ?? 1080, H = meta.height ?? 1350;
+        const logoBuf = await sharp(logo.buf).resize({ width: Math.round(W * 0.2) }).png().toBuffer();
+        const logoMeta = await sharp(logoBuf).metadata();
+        baseBuf = await sharp(baseBuf).composite([{
+          input: logoBuf,
+          top: Math.round(H * 0.04),
+          left: Math.round(W - (logoMeta.width ?? 0) - W * 0.05),
+        }]).jpeg({ quality: 92 }).toBuffer();
+      } catch (e) {
+        console.warn("composite logo raté, rendu sans logo :", e.message);
+        baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
+      }
+    } else {
+      baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
+    }
+
+    res.setHeader("content-type", "image/jpeg");
+    res.send(baseBuf);
+  } catch (e) {
+    console.error(e);
+    res.status(502).json({ error: "poster_failed", detail: String(e.message ?? e) });
+  }
+});
+
 // ---------- POST /generate ----------
 app.post("/generate", async (req, res) => {
   const { prompt, aspect_ratio = "4:5" } = req.body ?? {};
