@@ -14,6 +14,8 @@
 import express from "express";
 import puppeteer from "puppeteer";
 import sharp from "sharp";
+import { Agent } from "undici";
+const gAgent = new Agent({ connectTimeout: 30_000, headersTimeout: 600_000, bodyTimeout: 600_000 });
 
 const app = express();
 app.use(express.json({ limit: "3mb" }));
@@ -44,6 +46,7 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
 
   for (let i = 1; i <= tries; i++) {
     const res = await fetch(GEMINI_URL, {
+      dispatcher: gAgent,
       method: "POST",
       headers: {
         "content-type": "application/json",
