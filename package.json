@@ -6,6 +6,7 @@
     "start": "sh start.sh"
   },
   "dependencies": {
+    "undici": "^6.19.0",
     "sharp": "^0.33.0",
     "express": "^4.19.0",
     "puppeteer": "^23.0.0"
