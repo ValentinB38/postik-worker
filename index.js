@@ -27,9 +27,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- Appel Gemini (avec retry sur erreurs transitoires) ----------
-const GEMINI_MODEL = "gemini-3-pro-image-preview"; // nano banana pro
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+// Modèle principal + repli automatique quand le pro est saturé (503)
+const GEMINI_MODELS = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image"];
+const geminiUrl = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
 async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 3) {
   const parts = [{ text: prompt }];
@@ -44,31 +44,35 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
     },
   };
 
-  for (let i = 1; i <= tries; i++) {
-    const res = await fetch(GEMINI_URL, {
-      dispatcher: gAgent,
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": process.env.GOOGLE_API_KEY,
-      },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const partsOut = data?.candidates?.[0]?.content?.parts ?? [];
-      const imgPart = partsOut.find((p) => p.inline_data?.data || p.inlineData?.data);
-      const b64 = imgPart?.inline_data?.data ?? imgPart?.inlineData?.data;
-      if (!b64) throw new Error("réponse Gemini sans image: " + JSON.stringify(data).slice(0, 300));
-      return Buffer.from(b64, "base64");
+  for (const model of GEMINI_MODELS) {
+    for (let i = 1; i <= tries; i++) {
+      const res = await fetch(geminiUrl(model), {
+        dispatcher: gAgent,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": process.env.GOOGLE_API_KEY,
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const partsOut = data?.candidates?.[0]?.content?.parts ?? [];
+        const imgPart = partsOut.find((p) => p.inline_data?.data || p.inlineData?.data);
+        const b64 = imgPart?.inline_data?.data ?? imgPart?.inlineData?.data;
+        if (!b64) throw new Error("réponse Gemini sans image: " + JSON.stringify(data).slice(0, 300));
+        console.log(`gemini OK via ${model}`);
+        return Buffer.from(b64, "base64");
+      }
+      const txt = await res.text();
+      const transient = [429, 500, 503].includes(res.status);
+      console.warn(`gemini ${model} ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 150)}`);
+      if (transient && i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
+      if (transient) break; // modèle saturé -> on tente le suivant
+      throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
     }
-    const txt = await res.text();
-    const transient = [429, 500, 503].includes(res.status);
-    console.warn(`gemini ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 200)}`);
-    if (transient && i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
-    throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
   }
-}
+  throw new Error("tous les modèles Gemini sont indisponibles (503) — réessaie dans quelques minutes");
 
 async function fetchAsB64(url) {
   const r = await fetch(url);
