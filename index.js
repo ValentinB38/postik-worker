@@ -1,12 +1,11 @@
 // ============================================================
-// worker/index.js — Worker Postik (Railway) — V6.1
-// API Gemini directe avec MODÈLE DE REPLI automatique :
-//   gemini-3-pro-image-preview (nano banana pro) saturé (503/429)
-//   -> bascule sur gemini-2.5-flash-image (nano banana 1)
+// worker/index.js — Worker Postik (Railway) — V6.2 « streaming »
+// API Gemini en STREAMING (les en-têtes arrivent immédiatement,
+// l'image ensuite en morceaux) -> plus jamais de HeadersTimeout,
+// même quand Google est lent. Repli pro -> flash conservé.
 //   POST /generate  { prompt, aspect_ratio }                       -> JPEG (binaire)
 //   POST /typeset   { prompt, image_url, logo_url?, aspect_ratio } -> JPEG (binaire, logo composité)
 //   POST /compose   { html, width, height }                        -> JPEG (binaire, secours)
-// Sécurité : header x-worker-key
 // Variables Railway : WORKER_KEY, GOOGLE_API_KEY
 // package.json dependencies : express, puppeteer, sharp, undici
 // ============================================================
@@ -16,7 +15,7 @@ import puppeteer from "puppeteer";
 import sharp from "sharp";
 import { Agent } from "undici";
 
-const gAgent = new Agent({ connectTimeout: 15_000, headersTimeout: 180_000, bodyTimeout: 240_000 });
+const gAgent = new Agent({ connectTimeout: 15_000, headersTimeout: 60_000, bodyTimeout: 420_000 });
 
 const app = express();
 app.use(express.json({ limit: "3mb" }));
@@ -28,9 +27,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- Appel Gemini : principal + repli ----------
+// ---------- Appel Gemini en streaming : principal + repli ----------
 const GEMINI_MODELS = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image"];
-const geminiUrl = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+const geminiUrl = (model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
 async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 2) {
   const parts = [{ text: prompt }];
@@ -47,36 +47,59 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
 
   for (const model of GEMINI_MODELS) {
     for (let i = 1; i <= tries; i++) {
-      const res = await fetch(geminiUrl(model), {
-        dispatcher: gAgent,
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": process.env.GOOGLE_API_KEY,
-        },
-        body: JSON.stringify(body),
-      });
+      let res;
+      try {
+        res = await fetch(geminiUrl(model), {
+          dispatcher: gAgent,
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-goog-api-key": process.env.GOOGLE_API_KEY,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        console.warn(`gemini ${model} réseau (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)}`);
+        if (i < tries) { await new Promise((r) => setTimeout(r, 10000)); continue; }
+        break; // modèle injoignable -> suivant
+      }
+
       if (res.ok) {
-        const data = await res.json();
-        const partsOut = data?.candidates?.[0]?.content?.parts ?? [];
-        const imgPart = partsOut.find((p) => p.inline_data?.data || p.inlineData?.data);
-        const b64 = imgPart?.inline_data?.data ?? imgPart?.inlineData?.data;
-        if (!b64) throw new Error("réponse Gemini sans image: " + JSON.stringify(data).slice(0, 300));
-        console.log(`gemini OK via ${model}`);
+        // Flux SSE : on concatène les morceaux d'image (base64) dans l'ordre
+        const text = await res.text();
+        let b64 = "";
+        for (const line of text.split("\n")) {
+          const l = line.trim();
+          if (!l.startsWith("data:")) continue;
+          const payload = l.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          try {
+            const chunk = JSON.parse(payload);
+            const partsOut = chunk?.candidates?.[0]?.content?.parts ?? [];
+            for (const p of partsOut) {
+              const d = p.inline_data?.data ?? p.inlineData?.data;
+              if (d) b64 += d;
+            }
+          } catch { /* morceau non-JSON, on ignore */ }
+        }
+        if (!b64) {
+          console.warn(`gemini ${model}: flux sans image (essai ${i}/${tries})`);
+          if (i < tries) { await new Promise((r) => setTimeout(r, 10000)); continue; }
+          break;
+        }
+        console.log(`gemini OK via ${model} (${Math.round(b64.length / 1024)} Ko b64)`);
         return Buffer.from(b64, "base64");
       }
+
       const txt = await res.text();
       const transient = [429, 500, 503].includes(res.status);
       console.warn(`gemini ${model} ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 150)}`);
-      if (transient && i < tries) {
-        await new Promise((r) => setTimeout(r, 15000));
-        continue;
-      }
-      if (transient) break; // modèle saturé -> on tente le modèle suivant
+      if (transient && i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
+      if (transient) break; // saturé -> modèle suivant
       throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
     }
   }
-  throw new Error("tous les modèles Gemini sont indisponibles (surcharge) — réessaie dans quelques minutes");
+  throw new Error("tous les modèles Gemini sont indisponibles — réessaie dans quelques minutes");
 }
 
 async function fetchAsB64(url) {
@@ -176,7 +199,7 @@ app.post("/compose", async (req, res) => {
   }
 });
 
-app.get("/health", (_req, res) => res.json({ ok: true, engine: "gemini", models: GEMINI_MODELS }));
+app.get("/health", (_req, res) => res.json({ ok: true, engine: "gemini-stream", models: GEMINI_MODELS }));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Worker Postik (Gemini + repli) sur :${port}`));
+app.listen(port, () => console.log(`Worker Postik (Gemini streaming) sur :${port}`));
