@@ -80,10 +80,10 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
                 const d = p.inline_data?.data ?? p.inlineData?.data;
                 if (d) bufs.push(Buffer.from(d, "base64"));
               }
-            } catch { /* morceau non-JSON */ }
+            } catch { /* morceau non-JSON, on ignore */ }
           }
           if (!bufs.length) {
-            console.warn(`gemini ${model}: flux sans image (essai ${i}/${tries})`);
+            console.warn(`gemini ${model}: flux sans image (essai ${i}/${tries}, passage ${sweep})`);
             if (i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
             break;
           }
@@ -96,7 +96,7 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
         const transient = [429, 500, 503].includes(res.status);
         console.warn(`gemini ${model} ${res.status} (essai ${i}/${tries}, passage ${sweep}): ${txt.slice(0, 150)}`);
         if (transient && i < tries) { await new Promise((r) => setTimeout(r, 20000)); continue; }
-        if (transient) break;
+        if (transient) break; // saturé -> modèle suivant
         throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
       }
     }
@@ -107,6 +107,7 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
   }
   throw new Error("tous les modèles Gemini sont indisponibles — réessaie dans quelques minutes");
 }
+
 async function fetchAsB64(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`téléchargement impossible: ${url.slice(0, 80)}`);
@@ -117,8 +118,9 @@ async function fetchAsB64(url) {
 
 // ---------- POST /poster ----------
 // AFFICHE COMPLÈTE en UNE génération (image + typographie ensemble).
-// ref_url (optionnel) : photo du client passée en référence.
-// logo_url (optionnel) : composité au pixel près après coup.
+// ref_url (optionnel) : photo/produit du client — référence STRICTE.
+// logo_url (optionnel) : logo officiel — référence STRICTE, intégré
+// par le modèle lui-même (consignes de fidélité dans le prompt).
 app.post("/poster", async (req, res) => {
   const { prompt, ref_url = null, logo_url = null, aspect_ratio = "4:5" } = req.body ?? {};
   if (!prompt) return res.status(400).json({ error: "prompt requis" });
@@ -128,29 +130,12 @@ app.post("/poster", async (req, res) => {
       const ref = await fetchAsB64(ref_url);
       refImages.push({ mime: ref.mime, b64: ref.b64 });
     }
-    const raw = await geminiImage({ prompt, refImages, aspectRatio: aspect_ratio });
-    let baseBuf = raw;
-
     if (logo_url) {
-      try {
-        const logo = await fetchAsB64(logo_url);
-        const meta = await sharp(baseBuf).metadata();
-        const W = meta.width ?? 1080, H = meta.height ?? 1350;
-        const logoBuf = await sharp(logo.buf).resize({ width: Math.round(W * 0.2) }).png().toBuffer();
-        const logoMeta = await sharp(logoBuf).metadata();
-        baseBuf = await sharp(baseBuf).composite([{
-          input: logoBuf,
-          top: Math.round(H * 0.04),
-          left: Math.round(W - (logoMeta.width ?? 0) - W * 0.05),
-        }]).jpeg({ quality: 92 }).toBuffer();
-      } catch (e) {
-        console.warn("composite logo raté, rendu sans logo :", e.message);
-        baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
-      }
-    } else {
-      baseBuf = await sharp(baseBuf).jpeg({ quality: 92 }).toBuffer();
+      const logo = await fetchAsB64(logo_url);
+      refImages.push({ mime: logo.mime, b64: logo.b64 });
     }
-
+    const raw = await geminiImage({ prompt, refImages, aspectRatio: aspect_ratio });
+    const baseBuf = await sharp(raw).jpeg({ quality: 92 }).toBuffer();
     res.setHeader("content-type", "image/jpeg");
     res.send(baseBuf);
   } catch (e) {
