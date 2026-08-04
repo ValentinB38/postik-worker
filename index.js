@@ -21,11 +21,7 @@ import { Agent } from "undici";
 import { createClient } from "@supabase/supabase-js";
 
 const gAgent = new Agent({ connectTimeout: 15_000, headersTimeout: 60_000, bodyTimeout: 420_000 });
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-  realtime: { params: {} },
-  global: { fetch },
-});
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -126,9 +122,10 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
 // ============================================================
 // PROMPT JSON STRUCTURÉ (porté de l'Edge — identique V6)
 // ============================================================
-function buildJsonPrompt(g, hasLogo, hasRef) {
+function buildJsonPrompt(g, hasLogo, hasRef, refMode) {
   const contenu = g?.contenu ?? [];
   const palette = g?.palette ?? [];
+  const isFond = hasRef && refMode !== "produit";
   const get = (t) => contenu.find((b) => b.type === t);
   const texts = [];
   const add = (role, v, note) => { if (v) texts.push({ role, content: v, rendering: note ?? "exact, letter-perfect" }); };
@@ -155,10 +152,14 @@ function buildJsonPrompt(g, hasLogo, hasRef) {
     ...(hasRef || hasLogo ? {
       reference_inputs: {
         ...(hasRef ? {
-          client_photo: {
-            role: "the client's real product / place — STRICT visual identity",
+          client_photo: isFond ? {
+            role: "THE background scene of the poster — this photo IS the poster",
             weight: 1.0,
-            note: "Reproduce this subject EXACTLY: shape, materials, fabric, stitching, colors, details. You may place it in a designed composition, re-light it and dramatize the scene around it, but NEVER replace it with a generic equivalent, never alter its colors or materials.",
+            note: "This exact photo is the scene of the poster. Keep its content, place and identity fully recognizable. You may re-grade the colors, dramatize the light and crop for the format — but NEVER generate a different scene, never replace or reinvent what the photo shows. Design the typography ON and AROUND this photo.",
+          } : {
+            role: "the client's real product — STRICT visual identity",
+            weight: 1.0,
+            note: "Reproduce this product EXACTLY: shape, materials, fabric, stitching, colors, details. You may place it in a designed composition, re-light it and dramatize the scene around it, but NEVER replace it with a generic equivalent, never alter its colors or materials.",
           },
         } : {}),
         ...(hasLogo ? {
@@ -170,7 +171,9 @@ function buildJsonPrompt(g, hasLogo, hasRef) {
         } : {}),
       },
     } : {}),
-    scene: g?.scene ?? { concept: "A dramatic, textured, cinematic scene related to the event." },
+    scene: isFond
+      ? { concept: "USE THE PROVIDED CLIENT PHOTO AS THE SCENE. Do not invent a new scene.", regrade_only: g?.scene ?? {} }
+      : (g?.scene ?? { concept: "A dramatic, textured, cinematic scene related to the event." }),
     typography_system: {
       ...(g?.typography_system ?? {}),
       typefaces_limit: 2,
@@ -215,7 +218,10 @@ function buildJsonPrompt(g, hasLogo, hasRef) {
       "All text fully inside the frame with comfortable padding; nothing cut at any edge.",
       "No overlapping texts (except the deliberate behind-the-subject interaction).",
       hasLogo ? "The provided logo is reproduced IDENTICALLY (shapes, colors, typography) and integrated tastefully — never redrawn, never altered, never duplicated." : "Never draw any logo.",
-      hasRef ? "The provided product/place keeps its EXACT real appearance — never recolor, restyle or replace it (a beer keeps its real foam color, a mattress keeps its real fabric)." : "Real-world subjects keep believable natural colors — never tint a product unnaturally to match the palette.",
+      hasRef ? (isFond
+        ? "THE PROVIDED PHOTO IS THE SCENE: the poster's background must clearly be this photo (re-graded and cropped at most). Generating a different scene is an immediate failure."
+        : "The provided product keeps its EXACT real appearance — never recolor, restyle or replace it (a beer keeps its real foam color, a mattress keeps its real fabric).")
+        : "Real-world subjects keep believable natural colors — never tint a product unnaturally to match the palette.",
       "No watermark, no platform UI, no signature of the model.",
     ],
     negative_prompt: "specification labels rendered as text, archetype names on the poster, zone labels, block names ('accroche','pastille','titre') as visible words, deformed letters, misspelled words, broken words, invented text, extra slogans, template layout, stacked equal lines, centered-everything, default purple accent, neon fluo colors, glow, bevel, gradient inside letters, 3D extruded text, rainbow text, white border, frame, vignette edges, watermark, UI, plastic look, oversaturation, HDR, purple-cyan lighting, generic AI art",
@@ -307,7 +313,7 @@ async function produceJob(posterId) {
       }
     }
 
-    let prompt = buildJsonPrompt(g, hasLogo, hasRef);
+    let prompt = buildJsonPrompt(g, hasLogo, hasRef, poster.brief?.ref_mode);
     const key = aspect.replace(":", "x");
     const path = `${poster.org_id}/${poster.id}/final-${key}.jpg`;
 
