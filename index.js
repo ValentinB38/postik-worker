@@ -21,7 +21,11 @@ import { Agent } from "undici";
 import { createClient } from "@supabase/supabase-js";
 
 const gAgent = new Agent({ connectTimeout: 15_000, headersTimeout: 60_000, bodyTimeout: 420_000 });
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+  realtime: { params: {} },
+  global: { fetch },
+});
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
