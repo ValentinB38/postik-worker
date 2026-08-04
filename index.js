@@ -45,7 +45,13 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
     },
   };
 
-  for (let sweep = 1; sweep <= 2; sweep++) {
+  // Avec des images de référence (photo produit, logo), chaque essai est
+  // lourd (upload des références à chaque fois) : on raccourcit pour rester
+  // sous la limite de temps de la tâche de fond côté Supabase.
+  const maxSweeps = refImages.length ? 1 : 2;
+  if (refImages.length) tries = 2;
+
+  for (let sweep = 1; sweep <= maxSweeps; sweep++) {
     for (const model of GEMINI_MODELS) {
       for (let i = 1; i <= tries; i++) {
         let res;
@@ -100,7 +106,7 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
         throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
       }
     }
-    if (sweep === 1) {
+    if (sweep < maxSweeps) {
       console.warn("tous les modèles saturés -> pause 45s puis second passage");
       await new Promise((r) => setTimeout(r, 45000));
     }
