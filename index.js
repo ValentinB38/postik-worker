@@ -247,7 +247,7 @@ async function visionCheck(imageBuf, contenu, hasLogo, hasRef) {
 MISSION 1 — CONFORMITÉ (bloquante, "ok": false si violée) :
 - Tout texte INVENTÉ (mot, mention, badge, slogan absent de la liste attendue) = faute, cite-le. TRAQUE EN PARTICULIER les étiquettes techniques rendues comme du texte : "ACCROCHE", "PASTILLE", "TITRE", "STICKER STORM", "SPLIT PANEL", noms de zones ("TOP 45%") — leur présence visible = faute immédiate.
 - CHIFFRES : tout nombre de la liste attendue ABSENT de l'affiche = faute. Un nombre barré doit être l'ANCIEN prix (jamais le nouveau prix, jamais une économie). Un texte dupliqué en écho/fantôme derrière lui-même = faute.
-- Orthographe lettre à lettre : un mot mal orthographié = faute.
+- Orthographe lettre à lettre : un mot mal orthographié = faute. ATTENTION MAXIMALE aux textes COURBES, en arc ou qui suivent un contour : épelle-les caractère par caractère un doigt à la fois (lettres doublées "AANIMATIONS", lettres manquantes "SNAKING" au lieu de "SNACKING" — ce sont les fautes les plus fréquentes dans ces zones).
 - Un mot COUPÉ sur deux lignes = faute.
 - Lettres déformées/fondues, texte attendu ABSENT, texte coupé par un bord, texte illisible, marge/bordure blanche autour de l'affiche = faute.
 ${hasLogo ? "- LOGO : s'il apparaît, il doit sembler net, cohérent et non déformé. Logo trahi = faute." : ""}
