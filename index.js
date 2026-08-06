@@ -324,6 +324,14 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
     const cg = sc.color_grading;
     p(`Étalonnage : ${[cg.look, cg.palette_ratio, (cg.textures ?? []).join(", ")].filter(Boolean).join(" — ")}`);
   }
+  if (Array.isArray(sc.materials_physics) && sc.materials_physics.length) {
+    p(`Comportement de la lumière sur les matières (c'est ce qui rend une image crédible) :`);
+    sc.materials_physics.forEach((m) => p(`— ${m}`));
+  }
+  if (sc.atmosphere) p(`Matière atmosphérique qui donne du volume à la scène : ${sc.atmosphere}`);
+  if (sc.optical_signature) p(`Signature optique assumée de l'objectif : ${sc.optical_signature}`);
+  if (sc.post_production) p(`Étalonnage et retouche finale : ${sc.post_production}`);
+  p(`Quelqu'un qui découvre cette affiche dans la rue doit croire qu'une équipe a fait un vrai shooting pour ce commerce, puis qu'un studio a composé la typographie par-dessus. Jamais une image générée, jamais un montage.`);
   p(`RÉALISME PHOTOGRAPHIQUE — exigence non négociable : real photograph, shot on a full-frame camera with a fast prime lens, natural depth of field with real optical falloff, true-to-life skin texture and material response, visible fine film grain, micro-contrast, subtle lens vignetting and chromatic aberration, real dust and wear, believable shadows with soft ambient occlusion. Photojournalistic honesty: this must look like a frame captured in a real place, not an illustration, not a 3D render, not flat vector art, not a composited studio cut-out.`);
   p(`La profondeur est réelle : premier plan, sujet et arrière-plan occupent des distances différentes, avec une vraie mise au point sélective. La lumière vient de sources visibles ou plausibles dans le lieu.`);
   p(`Aucune lettre, aucun mot, aucune enseigne lisible n'apparaît dans le décor photographié lui-même : tout le texte de l'affiche est posé par toi, en typographie.`);
@@ -335,7 +343,7 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   p(`Vérifie chaque mot lettre par lettre avant de rendre, en particulier les petits textes du bas : c'est là que les fautes se glissent. Les lettres de chaque mot sont sans ambiguïté à la lecture (un Z se lit Z et jamais 7, un O se lit O et jamais 0, un I se lit I et jamais 1).`);
 
   p(`\n=== 3. LA TYPOGRAPHIE ===`);
-  if (ty.archetype) p(`Parti pris de composition : ${ty.archetype}`);
+  if (ty.archetype) p(`Parti pris de composition : ${ty.archetype}. Ce parti pris décrit la façon dont la TYPOGRAPHIE s'organise sur la photographie ; il ne divise jamais l'affiche en panneaux, colonnes pleines ou bandes de couleur unie.`);
   if (ty.display_font_character) p(`Caractère de la police d'affichage : ${ty.display_font_character}`);
   if (ty.secondary_font_character) p(`Police secondaire : ${ty.secondary_font_character}`);
   p(`Exactement DEUX familles de caractères sur toute l'affiche, et TROIS tailles de texte : une taille d'affichage monumentale, une taille intermédiaire, une petite taille.`);
@@ -348,17 +356,28 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   if (ty.typo_image_interaction) p(`INTERACTION OBLIGATOIRE entre typo et image : ${ty.typo_image_interaction}`);
   p(`Micro-typographie : interlignage serré de 0,85 à 0,95 sur les lignes d'affichage empilées ; approche légèrement resserrée sur les capitales condensées et ouverte de 6 à 12 % sur les petites capitales ; crénage optique sur le titre ; une seule unité d'espacement gouverne toutes les marges et tous les intervalles ; vraies apostrophes typographiques, espace fine avant % et :, tiret demi-cadratin pour les plages de nombres.`);
   p(`Les lettres sont posées en encre pleine et plate : leur couleur est unie sur toute la surface de chaque lettre, leurs contours sont nets, et chaque texte est rendu une seule fois, à un seul endroit.`);
+  const ti = ty.type_integration;
+  if (ti && (ti.occlusion || ti.light_wrap || ti.type_shadow || ti.grain_match)) {
+    p(`\nINTÉGRATION DES LETTRES DANS LA PHOTOGRAPHIE — c'est le geste qui distingue une vraie affiche d'un montage. La typographie appartient physiquement à la scène :`);
+    if (ti.occlusion) p(`— Occlusion : ${ti.occlusion}`);
+    if (ti.light_wrap) p(`— Débord de lumière sur les lettres : ${ti.light_wrap}`);
+    if (ti.type_shadow) p(`— Ombre portée des lettres : ${ti.type_shadow}`);
+    if (ti.grain_match) p(`— Continuité de matière : ${ti.grain_match}`);
+    p(`Ces quatre gestes se combinent : les lettres reçoivent la même lumière, la même poussière et le même grain que la photographie qui les porte.`);
+  }
+  if (ty.print_finish) p(`Finition d'impression tenue sur toute l'affiche : ${ty.print_finish}`);
 
   /* ---------- 4. COMPOSITION CHIFFRÉE ---------- */
   p(`\n=== 4. COMPOSITION ET PARCOURS DE L'ŒIL ===`);
   if (ty.reading_path) p(`Parcours de lecture à construire, dans cet ordre : ${ty.reading_path}. Chaque étape est visuellement évidente.`);
   p(`Le bloc dominant (titre ou chiffre héros) s'étend sur 40 à 70 % de la LARGEUR de l'affiche et forme UNE masse composée, posée sur la photographie. Il s'agit d'une échelle de lettres, pas d'une surface à remplir : la photographie continue d'exister derrière et autour de lui, et respire dans les vides de la composition. Les informations secondaires occupent une bande discrète, en général en pied d'affiche, hiérarchisées entre elles.`);
   if (Array.isArray(ty.layout_zones)) {
+    p(`Emplacements indicatifs des textes SUR la photographie (ce sont des positions de blocs de lettres posés sur l'image, en aucun cas un découpage de l'affiche en panneaux ou en bandes de couleur ; la photographie continue derrière chacun d'eux) :`);
     ty.layout_zones.forEach((z) => {
-      if (z?.zone) p(`Zone ${z.zone} : ${[z.content, z.scale, z.alignment, z.anchored_to && "calé sur " + z.anchored_to].filter(Boolean).join(" — ")}`);
+      if (z?.zone) p(`— vers ${z.zone} : ${[z.content, z.scale, z.alignment, z.anchored_to && "calé sur " + z.anchored_to].filter(Boolean).join(" — ")}`);
     });
   }
-  p(`Les lignes de base et les blocs s'alignent sur des lignes réelles de la scène (horizon, arête, direction de la lumière). L'affiche remplit tout le cadre, bord à bord, d'un bord à l'autre du format. Tout le texte est entièrement à l'intérieur du cadre, avec une marge confortable autour.`);
+  p(`Les lignes de base et les blocs s'alignent sur des lignes réelles de la scène (horizon, arête, direction de la lumière). LA PHOTOGRAPHIE S'ÉTEND D'UN BORD À L'AUTRE DU CADRE, y compris derrière les colonnes de texte et sous les plus grandes lettres : à aucun endroit de l'affiche on ne trouve une zone où l'image a disparu au profit d'une couleur unie. Tout le texte est entièrement à l'intérieur du cadre, avec une marge confortable autour.`);
   p(`Au maximum DEUX artifices graphiques (filets fins, points repères, une flèche, marques d'angle, un soulignement dessiné à la main), utilisés de façon cohérente comme éléments de la grille.`);
 
   /* ---------- 5. COULEUR ---------- */
@@ -383,6 +402,7 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   p(`4) Aucun mot n'est coupé entre deux lignes, aucun texte n'est tronqué par un bord, aucun texte n'est écrit deux fois.`);
   p(`5) La composition est une idée de directeur artistique défendable devant un client, pas un empilement de lignes de même taille dans un coin.`);
   p(`6) L'image finale ressemble à une VRAIE PHOTOGRAPHIE occupant tout le cadre, avec sa profondeur et sa matière — et non à un fond plat, à une illustration ou à une photo reléguée sur une moitié de l'affiche.`);
+  p(`7) Test du panneau : si tu masques mentalement tout le texte, il reste UNE seule photographie continue qui remplit le format entier. S'il reste une bande ou une moitié de couleur unie, la composition est à refaire.`);
   return L.join("\n");
 }
 
@@ -512,8 +532,23 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
 // GPT Image 2 d'abord ; toute panne (saturation, modération, réseau)
 // bascule automatiquement sur la chaîne Gemini pro->flash existante.
 // ============================================================
-async function generateImage({ prompt, promptOA, refImages, aspectRatio }) {
-  if (process.env.OPENAI_API_KEY) {
+// PRIMARY_ENGINE (variable Railway) : "openai" (défaut) ou "gemini".
+// prefer permet de forcer l'autre moteur sur la 2e tentative : la beauté d'un
+// moteur, la rigueur typographique de l'autre.
+async function generateImage({ prompt, promptOA, refImages, aspectRatio, prefer }) {
+  const primary = prefer ?? (process.env.PRIMARY_ENGINE || "openai");
+  const hasOA = !!process.env.OPENAI_API_KEY;
+
+  if (primary === "gemini") {
+    try { return await geminiImage({ prompt, refImages, aspectRatio }); }
+    catch (e) {
+      console.warn(`gemini KO -> secours gpt-image-2 : ${String(e.message ?? e).slice(0, 160)}`);
+      if (!hasOA) throw e;
+      return openaiImage({ prompt: promptOA ?? prompt, refImages, aspectRatio });
+    }
+  }
+
+  if (hasOA) {
     try { return await openaiImage({ prompt: promptOA ?? prompt, refImages, aspectRatio }); }
     catch (e) { console.warn(`gpt-image-2 KO -> secours Gemini : ${String(e.message ?? e).slice(0, 160)}`); }
   }
@@ -649,7 +684,9 @@ async function produceJob(posterId) {
       prompt = prompt.slice(0, -2) + `,\n "correction_of_previous_attempt": "PREVIOUS ATTEMPT WAS REJECTED (design score ${check.note}/10). REASON: ${String(check.probleme).replace(/"/g, "'")}. Fix this precisely and raise the design ambition, keep the rest identical."\n}`;
       promptOA += `\n\n=== CORRECTION D'UNE PREMIÈRE VERSION ===\nUne première version de cette affiche a été refusée au contrôle qualité. Motif : ${String(check.probleme).replace(/"/g, "'")}. Corrige précisément ce point, relève l'ambition graphique, et garde tout le reste identique à la commande ci-dessus.`;
       try {
-        const buf2 = await generateImage({ prompt, promptOA, refImages, aspectRatio: aspect });
+        const other = (process.env.PRIMARY_ENGINE || "openai") === "gemini" ? "openai" : "gemini";
+        console.log(`2e tentative confiée à l'autre moteur : ${other}`);
+        const buf2 = await generateImage({ prompt, promptOA, refImages, aspectRatio: aspect, prefer: other });
         await livrer(buf2);
         console.log(`✔ poster livré (2e tentative) ${poster.id}`);
       } catch (e) {
