@@ -24,6 +24,11 @@ import { Agent } from "undici";
 import { createClient } from "@supabase/supabase-js";
 
 const gAgent = new Agent({ connectTimeout: 15_000, headersTimeout: 60_000, bodyTimeout: 420_000 });
+// Agent dédié OpenAI : l'API images est SYNCHRONE (aucun en-tête tant que
+// l'image n'est pas finie, jusqu'à ~2 min) -> headersTimeout doit couvrir
+// toute la fabrication, contrairement au streaming Gemini.
+const oaAgent = new Agent({ headersTimeout: 300_000, bodyTimeout: 420_000, connect: { timeout: 15_000, family: 4 } });
+// family: 4 = force IPv4 (Railway peut résoudre api.openai.com en IPv6 sans route de sortie -> fetch failed instantané)
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 const app = express();
@@ -255,60 +260,101 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
   const fullPrompt =
     "Follow this poster specification EXACTLY. The negative_prompt field is a strict list of things that must NEVER appear on the poster.\n" + prompt;
 
+  // STREAMING OBLIGATOIRE : l'API images est synchrone et facturée même si le
+  // client se déconnecte. En streaming, des aperçus partiels circulent pendant
+  // toute la fabrication -> aucune coupure pour inactivité, et l'image payée
+  // n'est jamais perdue.
   for (let i = 1; i <= tries; i++) {
     let res;
     try {
       if (refImages.length) {
-        // Avec références (photo client / logo) : endpoint edits, multipart
         const fd = new FormData();
         fd.append("model", "gpt-image-2");
         fd.append("prompt", fullPrompt);
         fd.append("size", size);
         fd.append("quality", "high");
         fd.append("output_format", "png");
+        fd.append("stream", "true");
+        fd.append("partial_images", "2");
         refImages.forEach((img, idx) => {
           const mime = img.mime || "image/png";
           fd.append("image[]", new Blob([Buffer.from(img.b64, "base64")], { type: mime }), `ref-${idx + 1}.${(mime.split("/")[1] || "png")}`);
         });
         res = await fetch("https://api.openai.com/v1/images/edits", {
-          dispatcher: gAgent,
+          dispatcher: oaAgent,
           method: "POST",
-          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, Accept: "text/event-stream" },
           body: fd,
         });
       } else {
         res = await fetch("https://api.openai.com/v1/images/generations", {
-          dispatcher: gAgent,
+          dispatcher: oaAgent,
           method: "POST",
-          headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-          body: JSON.stringify({ model: "gpt-image-2", prompt: fullPrompt, size, quality: "high", output_format: "png" }),
+          headers: {
+            "content-type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-image-2", prompt: fullPrompt, size, quality: "high",
+            output_format: "png", stream: true, partial_images: 2,
+          }),
         });
       }
     } catch (e) {
-      console.warn(`gpt-image-2 réseau (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)}`);
+      console.warn(`gpt-image-2 réseau (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)} | cause: ${String(e.cause?.code ?? e.cause ?? "inconnue").slice(0, 120)}`);
       if (i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
       throw e;
     }
 
-    if (res.ok) {
-      const data = await res.json();
-      const b64 = data?.data?.[0]?.b64_json;
-      if (!b64) {
-        console.warn(`gpt-image-2: réponse sans image (essai ${i}/${tries})`);
-        if (i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
-        throw new Error("gpt-image-2: réponse sans image");
-      }
-      LAST_MODEL = "gpt-image-2";
-      const out = Buffer.from(b64, "base64");
-      console.log(`gpt-image-2 OK (${Math.round(out.length / 1024)} Ko, essai ${i}, ${size})`);
-      return out;
+    if (!res.ok) {
+      const txt = await res.text();
+      const transient = [429, 500, 502, 503, 529].includes(res.status);
+      console.warn(`gpt-image-2 ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 200)}`);
+      if (transient && i < tries) { await new Promise((r) => setTimeout(r, 20000 * i)); continue; }
+      throw new Error(`gpt-image-2 ${res.status}: ${txt.slice(0, 300)}`);
     }
 
-    const txt = await res.text();
-    const transient = [429, 500, 502, 503, 529].includes(res.status);
-    console.warn(`gpt-image-2 ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 200)}`);
-    if (transient && i < tries) { await new Promise((r) => setTimeout(r, 20000 * i)); continue; }
-    throw new Error(`gpt-image-2 ${res.status}: ${txt.slice(0, 300)}`);
+    // --- Lecture du flux SSE : on garde le dernier b64 vu (final > partiel) ---
+    try {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "", finalB64 = null, lastPartial = null, partials = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const l = line.trim();
+          if (!l.startsWith("data:")) continue;
+          const payload = l.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          let evt; try { evt = JSON.parse(payload); } catch { continue; }
+          const b64 = evt.b64_json ?? evt.data?.[0]?.b64_json;
+          if (!b64) continue;
+          if (String(evt.type ?? "").includes("completed")) finalB64 = b64;
+          else { lastPartial = b64; partials++; }
+        }
+      }
+
+      const chosen = finalB64 ?? lastPartial;
+      if (!chosen) {
+        console.warn(`gpt-image-2: flux sans image (essai ${i}/${tries})`);
+        if (i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
+        throw new Error("gpt-image-2: flux sans image");
+      }
+      LAST_MODEL = "gpt-image-2";
+      const out = Buffer.from(chosen, "base64");
+      console.log(`gpt-image-2 OK (${Math.round(out.length / 1024)} Ko, essai ${i}, ${size}, ${partials} aperçu(s)${finalB64 ? ", image finale" : ", APERÇU seulement"})`);
+      return out;
+    } catch (e) {
+      console.warn(`gpt-image-2 flux interrompu (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)} | cause: ${String(e.cause?.code ?? e.cause ?? "inconnue").slice(0, 120)}`);
+      if (i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
+      throw e;
+    }
   }
   throw new Error("gpt-image-2 indisponible");
 }
