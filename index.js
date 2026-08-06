@@ -246,6 +246,140 @@ function buildJsonPrompt(g, hasLogo, hasRef, refMode) {
 }
 
 
+
+// ============================================================
+// PROMPT « COMMANDE DE STUDIO » — pour GPT Image 2
+// GPT Image 2 raisonne et planifie la mise en page AVANT de rendre :
+// il répond bien mieux à une directive écrite (ordre de lecture, poids
+// chiffrés, texte exact isolé) qu'à un arbre JSON de spec, et il n'a
+// pas de negative_prompt (toute interdiction est donc formulée en
+// POSITIF, sinon elle risque d'invoquer ce qu'elle interdit).
+// ============================================================
+function buildProsePrompt(g, hasLogo, hasRef, refMode) {
+  const contenu = g?.contenu ?? [];
+  const palette = (g?.palette ?? []).filter(Boolean);
+  const isFond = hasRef && refMode !== "produit";
+  const get = (t) => contenu.find((b) => b.type === t);
+  const sc = g?.scene ?? {};
+  const ty = g?.typography_system ?? {};
+  const L = [];
+  const p = (x) => L.push(x);
+
+  /* ---------- 1. LE TEXTE, ISOLÉ EN PREMIER ---------- */
+  const lines = [];
+  const titre = get("titre")?.texte;
+  if (titre) lines.push(`• TITRE — « ${titre} » — le bloc typographique monumental, une seule encre, chaque mot entier (jamais coupé ni tiré à la ligne au milieu d'un mot).`);
+  const accroche = get("accroche")?.texte;
+  if (accroche) lines.push(`• SOUS-TITRE — « ${accroche} » — nettement plus petit que le titre, il le complète sans le répéter.`);
+  const dt = get("datetime")?.texte;
+  if (dt) lines.push(`• DATE ET HEURE — « ${dt} » — traité comme une information forte et lisible de loin, sur une seule ligne.`);
+  const pastille = get("pastille")?.texte;
+  const promo = pastille?.match(/^\s*(.+?)\s*(?:->|→)\s*(.+?)\s*$/);
+  if (promo) {
+    lines.push(`• ANCIEN PRIX — « ${promo[1]} » — de taille moyenne, dans une encre sourde, traversé par UN seul trait net et droit : c'est visiblement le prix d'avant.`);
+    lines.push(`• NOUVEAU PRIX — « ${promo[2]} » — LE HÉROS de l'affiche : parmi les deux plus grands éléments, dans une encre forte, mis en scène comme un événement graphique. Il n'est jamais barré, jamais entouré d'un autre prix, et n'apparaît qu'UNE seule fois sur toute l'affiche.`);
+  } else if (pastille) {
+    lines.push(`• ÉLÉMENT CHOC — « ${pastille} » — l'argument de vente, mis en scène comme un événement graphique. Aucun chiffre n'est barré ici.`);
+  }
+  for (const it of (get("infos")?.items ?? [])) lines.push(`• INFO — « ${it} » — petit corps, groupé avec les autres informations pratiques, parfaitement lisible.`);
+  const cta = get("cta")?.texte;
+  if (cta) lines.push(`• APPEL À L'ACTION — « ${cta} ».`);
+  const contact = get("contact")?.texte;
+  if (contact) lines.push(`• CONTACT — « ${contact} » — petit corps, chiffres parfaitement formés et espacés, chaque chiffre exactement dans cet ordre.`);
+  const sign = get("signature")?.texte;
+  if (sign) lines.push(`• SIGNATURE — « ${sign} » — discrète, en pied d'affiche.`);
+
+  p(`COMMANDE : une affiche publicitaire française finie, prête à imprimer, format ${g?.aspect_ratio ?? "4:5"}. Niveau attendu : une commande à 300 € dans un studio d'affiches européen primé. Tu es le directeur artistique ET l'exécutant : tu conçois la mise en page, puis tu la rends.`);
+  p(`\n=== 1. LE TEXTE DE L'AFFICHE (la partie la plus importante de cette commande) ===`);
+  p(`Ces textes sont en FRANÇAIS et sont recopiés caractère par caractère, avec leurs accents exacts (é è ê à ç ô û), leurs apostrophes et leurs espaces. Ce sont les SEULS mots visibles sur l'affiche : chaque mot que tu écris provient de cette liste, et chaque élément de cette liste apparaît exactement une fois.`);
+  lines.forEach((l) => p(l));
+  p(`Vérifie chaque mot lettre par lettre avant de rendre, en particulier les petits textes du bas : c'est là que les fautes se glissent. Les lettres de chaque mot sont sans ambiguïté à la lecture (un Z se lit Z et jamais 7, un O se lit O et jamais 0, un I se lit I et jamais 1).`);
+
+  /* ---------- 2. LA SCÈNE ---------- */
+  p(`\n=== 2. LA SCÈNE PHOTOGRAPHIQUE ===`);
+  if (isFond) {
+    p(`La photo fournie EST la scène de l'affiche. Tu conserves son contenu, son lieu et son identité parfaitement reconnaissables. Tu as le droit d'en retravailler les couleurs, d'en dramatiser la lumière et de la recadrer au format. Tu composes la typographie SUR et AUTOUR de cette photo.`);
+  } else if (hasRef) {
+    p(`Le produit fourni est reproduit exactement : sa forme, ses matières, ses coutures, ses couleurs, ses détails réels. Tu le mets en scène, tu le ré-éclaires, tu dramatises le décor autour de lui, mais il reste ce produit-là, avec ses couleurs réelles.`);
+  }
+  if (sc.concept) p(`Concept : ${sc.concept}`);
+  if (sc.setting) p(`Lieu : ${sc.setting}`);
+  if (sc.mood) p(`Atmosphère : ${sc.mood}`);
+  if (sc.time_of_day) p(`Moment : ${sc.time_of_day}`);
+  if (sc.hero_detail) p(`Détail-vérité qui rend la scène crédible : ${sc.hero_detail}`);
+  if (sc.environment) {
+    const e = sc.environment;
+    if (e.foreground) p(`Premier plan : ${e.foreground}`);
+    if (e.midground) p(`Plan moyen : ${e.midground}`);
+    if (e.background) p(`Arrière-plan : ${e.background}`);
+    if (e.calm_zone) p(`Zone calme réservée à la typographie : ${e.calm_zone}`);
+  }
+  if (sc.lighting) {
+    const li = sc.lighting;
+    p(`Lumière : ${[li.type, li.direction, li.quality, li.signature_effect].filter(Boolean).join(" — ")}`);
+  }
+  if (sc.camera) {
+    const c = sc.camera;
+    p(`Prise de vue : ${[c.lens, c.aperture, c.angle, c.depth_of_field, c.framing].filter(Boolean).join(" — ")}`);
+  }
+  if (sc.color_grading) {
+    const cg = sc.color_grading;
+    p(`Étalonnage : ${[cg.look, cg.palette_ratio, (cg.textures ?? []).join(", ")].filter(Boolean).join(" — ")}`);
+  }
+  p(`L'image doit avoir été PHOTOGRAPHIÉE par un humain : grain argentique visible, matières tactiles, imperfections vivantes. Aucune lettre, aucun mot, aucune enseigne lisible n'apparaît dans le décor lui-même : tout le texte de l'affiche est posé par toi, en typographie.`);
+
+  /* ---------- 3. LA TYPOGRAPHIE ---------- */
+  p(`\n=== 3. LA TYPOGRAPHIE ===`);
+  if (ty.archetype) p(`Parti pris de composition : ${ty.archetype}`);
+  if (ty.display_font_character) p(`Caractère de la police d'affichage : ${ty.display_font_character}`);
+  if (ty.secondary_font_character) p(`Police secondaire : ${ty.secondary_font_character}`);
+  p(`Exactement DEUX familles de caractères sur toute l'affiche, et TROIS tailles de texte : une taille d'affichage monumentale, une taille intermédiaire, une petite taille.`);
+  p(`Contraste d'échelle : le titre est 8 à 12 fois plus grand que les petits textes. S'il paraît confortable, c'est qu'il est trop petit.`);
+  if (ty.title_ink) p(`Encre du titre : ${ty.title_ink} — le titre entier dans cette seule encre.`);
+  if (ty.accent) p(`Accent : ${ty.accent}`);
+  if (ty.numerals_treatment) p(`Traitement des chiffres : ${ty.numerals_treatment}`);
+  if (ty.signature_treatment) p(`Traitement signature (un seul sur l'affiche) : ${ty.signature_treatment}`);
+  if (ty.human_touch) p(`Touche humaine subtile : ${ty.human_touch}`);
+  if (ty.typo_image_interaction) p(`INTERACTION OBLIGATOIRE entre typo et image : ${ty.typo_image_interaction}`);
+  p(`Micro-typographie : interlignage serré de 0,85 à 0,95 sur les lignes d'affichage empilées ; approche légèrement resserrée sur les capitales condensées et ouverte de 6 à 12 % sur les petites capitales ; crénage optique sur le titre ; une seule unité d'espacement gouverne toutes les marges et tous les intervalles ; vraies apostrophes typographiques, espace fine avant % et :, tiret demi-cadratin pour les plages de nombres.`);
+  p(`Les lettres sont posées en encre pleine et plate : leur couleur est unie sur toute la surface de chaque lettre, leurs contours sont nets, et chaque texte est rendu une seule fois, à un seul endroit.`);
+
+  /* ---------- 4. COMPOSITION CHIFFRÉE ---------- */
+  p(`\n=== 4. COMPOSITION ET PARCOURS DE L'ŒIL ===`);
+  if (ty.reading_path) p(`Parcours de lecture à construire, dans cet ordre : ${ty.reading_path}. Chaque étape est visuellement évidente.`);
+  p(`Le bloc dominant (titre ou chiffre héros) occupe 40 à 70 % de la surface de l'affiche et forme UNE masse composée, avec un vide intentionnel autour. Les informations secondaires occupent une bande claire, en général en pied d'affiche, hiérarchisées entre elles.`);
+  if (Array.isArray(ty.layout_zones)) {
+    ty.layout_zones.forEach((z) => {
+      if (z?.zone) p(`Zone ${z.zone} : ${[z.content, z.scale, z.alignment, z.anchored_to && "calé sur " + z.anchored_to].filter(Boolean).join(" — ")}`);
+    });
+  }
+  p(`Les lignes de base et les blocs s'alignent sur des lignes réelles de la scène (horizon, arête, direction de la lumière). L'affiche remplit tout le cadre, bord à bord, d'un bord à l'autre du format. Tout le texte est entièrement à l'intérieur du cadre, avec une marge confortable autour.`);
+  p(`Au maximum DEUX artifices graphiques (filets fins, points repères, une flèche, marques d'angle, un soulignement dessiné à la main), utilisés de façon cohérente comme éléments de la grille.`);
+
+  /* ---------- 5. COULEUR ---------- */
+  p(`\n=== 5. LA COULEUR ===`);
+  p(`Palette de travail : ${(palette.length ? palette : ["#F5F1E4", "#101114"]).join(", ")}. Répartition 60/30/10.`);
+  p(`Des encres d'imprimerie profondes, légèrement désaturées, prolongeant les tons de la scène. TROIS couleurs de texte au maximum sur toute l'affiche, titre compris.`);
+
+  /* ---------- 6. RÉFÉRENCES ---------- */
+  if (hasLogo || hasRef) {
+    p(`\n=== 6. LES ÉLÉMENTS FOURNIS PAR LE CLIENT ===`);
+    if (hasLogo) p(`Le logo fourni est reproduit à l'identique — mêmes formes, mêmes couleurs, même typographie — et intégré avec goût, de petite taille, dans un angle propre ou sur une petite plaque qui appartient à la mise en page. Il apparaît une seule fois.`);
+    if (hasRef && !isFond) p(`Le produit fourni garde son apparence réelle exacte dans la composition finale.`);
+    if (isFond) p(`La photo fournie reste reconnaissable comme le lieu du client dans l'affiche finale.`);
+  }
+
+  /* ---------- 7. VÉRIFICATION FINALE ---------- */
+  p(`\n=== ${hasLogo || hasRef ? 7 : 6}. VÉRIFICATION AVANT DE RENDRE ===`);
+  p(`Avant de produire l'image, relis ta composition point par point :`);
+  p(`1) Chaque texte de la section 1 est présent, orthographié exactement, avec ses accents — épelle mentalement chaque mot, lettre après lettre, y compris dans les petites lignes.`);
+  p(`2) Chaque chiffre est exactement celui donné, dans le même ordre ; aucun nombre n'a été recalculé, arrondi ni reformulé.`);
+  p(`3) Aucun mot ne figure sur l'affiche s'il n'est pas dans la section 1 — ni slogan ajouté, ni mention inventée, ni étiquette de cette commande (les mots « titre », « sous-titre », « info », « zone » ne sont pas du contenu).`);
+  p(`4) Aucun mot n'est coupé entre deux lignes, aucun texte n'est tronqué par un bord, aucun texte n'est écrit deux fois.`);
+  p(`5) La composition est une idée de directeur artistique défendable devant un client, pas un empilement de lignes de même taille dans un coin.`);
+  return L.join("\n");
+}
+
 // ============================================================
 // GPT IMAGE 2 (OpenAI) — moteur principal si OPENAI_API_KEY est posée
 // - tailles arbitraires (multiples de 16, ratio 1:3..3:1) -> formats natifs
@@ -257,8 +391,7 @@ const OPENAI_SIZE = { "4:5": "1024x1280", "1:1": "1024x1024", "9:16": "864x1536"
 
 async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 3) {
   const size = OPENAI_SIZE[aspectRatio] ?? "1024x1280";
-  const fullPrompt =
-    "Follow this poster specification EXACTLY. The negative_prompt field is a strict list of things that must NEVER appear on the poster.\n" + prompt;
+  const fullPrompt = prompt;
 
   // STREAMING OBLIGATOIRE : l'API images est synchrone et facturée même si le
   // client se déconnecte. En streaming, des aperçus partiels circulent pendant
@@ -373,12 +506,12 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
 // GPT Image 2 d'abord ; toute panne (saturation, modération, réseau)
 // bascule automatiquement sur la chaîne Gemini pro->flash existante.
 // ============================================================
-async function generateImage(args) {
+async function generateImage({ prompt, promptOA, refImages, aspectRatio }) {
   if (process.env.OPENAI_API_KEY) {
-    try { return await openaiImage(args); }
+    try { return await openaiImage({ prompt: promptOA ?? prompt, refImages, aspectRatio }); }
     catch (e) { console.warn(`gpt-image-2 KO -> secours Gemini : ${String(e.message ?? e).slice(0, 160)}`); }
   }
-  return geminiImage(args);
+  return geminiImage({ prompt, refImages, aspectRatio });
 }
 
 // ============================================================
@@ -480,7 +613,8 @@ async function produceJob(posterId) {
       }
     }
 
-    let prompt = buildJsonPrompt(g, hasLogo, hasRef, poster.brief?.ref_mode);
+    let prompt = buildJsonPrompt(g, hasLogo, hasRef, poster.brief?.ref_mode);       // chaîne Gemini (secours)
+    let promptOA = buildProsePrompt(g, hasLogo, hasRef, poster.brief?.ref_mode);    // GPT Image 2 (principal)
     const key = aspect.replace(":", "x");
     const path = `${poster.org_id}/${poster.id}/final-${key}.jpg`;
 
@@ -498,7 +632,7 @@ async function produceJob(posterId) {
     }
 
     // ---- Tentative 1 -> contrôle -> (retry) -> livraison ----
-    const buf1 = await generateImage({ prompt, refImages, aspectRatio: aspect });
+    const buf1 = await generateImage({ prompt, promptOA, refImages, aspectRatio: aspect });
     await supabase.from("posters").update({ status: "checking" }).eq("id", poster.id);
     const check = await visionCheck(buf1, contenu, hasLogo, hasRef);
     if (check.ok && check.note >= 7) {
@@ -507,8 +641,9 @@ async function produceJob(posterId) {
     } else {
       console.warn(`tentative 1 rejetée (ok=${check.ok}, note=${check.note}): ${check.probleme}`);
       prompt = prompt.slice(0, -2) + `,\n "correction_of_previous_attempt": "PREVIOUS ATTEMPT WAS REJECTED (design score ${check.note}/10). REASON: ${String(check.probleme).replace(/"/g, "'")}. Fix this precisely and raise the design ambition, keep the rest identical."\n}`;
+      promptOA += `\n\n=== CORRECTION D'UNE PREMIÈRE VERSION ===\nUne première version de cette affiche a été refusée au contrôle qualité. Motif : ${String(check.probleme).replace(/"/g, "'")}. Corrige précisément ce point, relève l'ambition graphique, et garde tout le reste identique à la commande ci-dessus.`;
       try {
-        const buf2 = await generateImage({ prompt, refImages, aspectRatio: aspect });
+        const buf2 = await generateImage({ prompt, promptOA, refImages, aspectRatio: aspect });
         await livrer(buf2);
         console.log(`✔ poster livré (2e tentative) ${poster.id}`);
       } catch (e) {
