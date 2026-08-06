@@ -224,7 +224,7 @@ function buildJsonPrompt(g, hasLogo, hasRef, refMode) {
         : "Real-world subjects keep believable natural colors — never tint a product unnaturally to match the palette.",
       "No watermark, no platform UI, no signature of the model.",
     ],
-    negative_prompt: "specification labels rendered as text, archetype names on the poster, zone labels, block names ('accroche','pastille','titre') as visible words, deformed letters, misspelled words, broken words, invented text, extra slogans, template layout, stacked equal lines, centered-everything, default purple accent, neon fluo colors, glow, bevel, gradient inside letters, 3D extruded text, rainbow text, white border, frame, vignette edges, watermark, UI, plastic look, oversaturation, HDR, purple-cyan lighting, generic AI art",
+    negative_prompt: "placeholder text, conditional labels rendered as words ('si fourni', 'a completer', 'lieu/contact', 'your text here'), specification labels rendered as text, archetype names on the poster, zone labels, block names ('accroche','pastille','titre') as visible words, ambiguous stylized letterforms (Z that reads as 7, O that reads as 0, I that reads as 1), deformed letters, misspelled words, broken words, invented text, extra slogans, template layout, stacked equal lines, centered-everything, default purple accent, neon fluo colors, glow, bevel, gradient inside letters, 3D extruded text, rainbow text, white border, frame, vignette edges, watermark, UI, plastic look, oversaturation, HDR, purple-cyan lighting, generic AI art",
   };
 
   return JSON.stringify(spec, null, 1);
@@ -246,6 +246,8 @@ async function visionCheck(imageBuf, contenu, hasLogo, hasRef) {
 
 MISSION 1 — CONFORMITÉ (bloquante, "ok": false si violée) :
 - Tout texte INVENTÉ (mot, mention, badge, slogan absent de la liste attendue) = faute, cite-le. TRAQUE EN PARTICULIER les étiquettes techniques rendues comme du texte : "ACCROCHE", "PASTILLE", "TITRE", "STICKER STORM", "SPLIT PANEL", noms de zones ("TOP 45%") — leur présence visible = faute immédiate.
+- MÉTA-TEXTE / PLACEHOLDER : toute mention conditionnelle ou espace réservé visible sur l'affiche (« si fourni », « si disponible », « à compléter », « à définir », « lieu/contact », « infos pratiques » sans contenu réel, parenthèses d'instruction, « votre texte ici ») = FAUTE IMMÉDIATE : ok=false et note maximum 3. C'est la pire faute possible chez un client.
+- LISIBILITÉ DES LETTRES : chaque lettre du TITRE doit être sans ambiguïté à première lecture. Un Z stylisé qui se lit 7 (PIZZA lu PI77A), un O qui se lit 0, un I qui se lit 1, un S qui se lit 5 = faute, note maximum 5. Épelle le titre à voix haute comme un passant pressé.
 - CHIFFRES : tout nombre de la liste attendue ABSENT de l'affiche = faute. Un nombre barré doit être l'ANCIEN prix (jamais le nouveau prix, jamais une économie). Un texte dupliqué en écho/fantôme derrière lui-même = faute.
 - Orthographe lettre à lettre : un mot mal orthographié = faute. ATTENTION MAXIMALE aux textes COURBES, en arc ou qui suivent un contour : épelle-les caractère par caractère un doigt à la fois (lettres doublées "AANIMATIONS", lettres manquantes "SNAKING" au lieu de "SNACKING" — ce sont les fautes les plus fréquentes dans ces zones).
 - Un mot COUPÉ sur deux lignes = faute.
