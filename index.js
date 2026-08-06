@@ -1,16 +1,19 @@
 // ============================================================
-// worker/index.js — Worker Postik (Railway) — V8 « CHEF D'ORCHESTRE »
+// worker/index.js — Worker Postik (Railway) — V9 « GPT IMAGE 2 »
 // Railway n'a AUCUNE limite de temps : toute l'orchestration longue
 // vit désormais ICI (fini les morts silencieuses côté Edge).
 //   POST /produce { poster_id }  -> répond 202 immédiatement puis :
 //     lit la ligne posters -> construit le prompt JSON structuré
 //     -> télécharge réf produit + logo depuis Storage
-//     -> génère (Gemini, repli pro->flash) -> contrôle vision
+//     -> génère (GPT Image 2 en principal, chaîne Gemini pro->flash
+//        en secours automatique) -> contrôle vision
 //     (conformité + note design /10) -> 1 retry -> upload Storage
 //     -> update posters (ready / failed)
 //   GET /health
-// Variables Railway : WORKER_KEY, GOOGLE_API_KEY, SUPABASE_URL,
+// Variables Railway : WORKER_KEY, OPENAI_API_KEY (moteur principal),
+//                     GOOGLE_API_KEY (secours), SUPABASE_URL,
 //                     SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY
+// OPENAI_API_KEY absente = chaîne Gemini seule (déploiement sans risque)
 // package.json dependencies : express, sharp, undici, @supabase/supabase-js
 // (puppeteer peut être RETIRÉ des dependencies : plus utilisé)
 // ============================================================
@@ -237,6 +240,92 @@ function buildJsonPrompt(g, hasLogo, hasRef, refMode) {
   return JSON.stringify(spec, null, 1);
 }
 
+
+// ============================================================
+// GPT IMAGE 2 (OpenAI) — moteur principal si OPENAI_API_KEY est posée
+// - tailles arbitraires (multiples de 16, ratio 1:3..3:1) -> formats natifs
+// - références traitées en haute fidélité automatiquement
+// - NE PAS passer input_fidelity ni background transparent (refusés)
+// - API synchrone : jusqu'à ~2 min, retry backoff sur 429/5xx
+// ============================================================
+const OPENAI_SIZE = { "4:5": "1024x1280", "1:1": "1024x1024", "9:16": "864x1536", "2:3": "1024x1536" };
+
+async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, tries = 3) {
+  const size = OPENAI_SIZE[aspectRatio] ?? "1024x1280";
+  const fullPrompt =
+    "Follow this poster specification EXACTLY. The negative_prompt field is a strict list of things that must NEVER appear on the poster.\n" + prompt;
+
+  for (let i = 1; i <= tries; i++) {
+    let res;
+    try {
+      if (refImages.length) {
+        // Avec références (photo client / logo) : endpoint edits, multipart
+        const fd = new FormData();
+        fd.append("model", "gpt-image-2");
+        fd.append("prompt", fullPrompt);
+        fd.append("size", size);
+        fd.append("quality", "high");
+        fd.append("output_format", "png");
+        refImages.forEach((img, idx) => {
+          const mime = img.mime || "image/png";
+          fd.append("image[]", new Blob([Buffer.from(img.b64, "base64")], { type: mime }), `ref-${idx + 1}.${(mime.split("/")[1] || "png")}`);
+        });
+        res = await fetch("https://api.openai.com/v1/images/edits", {
+          dispatcher: gAgent,
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          body: fd,
+        });
+      } else {
+        res = await fetch("https://api.openai.com/v1/images/generations", {
+          dispatcher: gAgent,
+          method: "POST",
+          headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          body: JSON.stringify({ model: "gpt-image-2", prompt: fullPrompt, size, quality: "high", output_format: "png" }),
+        });
+      }
+    } catch (e) {
+      console.warn(`gpt-image-2 réseau (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)}`);
+      if (i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
+      throw e;
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      const b64 = data?.data?.[0]?.b64_json;
+      if (!b64) {
+        console.warn(`gpt-image-2: réponse sans image (essai ${i}/${tries})`);
+        if (i < tries) { await new Promise((r) => setTimeout(r, 12000)); continue; }
+        throw new Error("gpt-image-2: réponse sans image");
+      }
+      LAST_MODEL = "gpt-image-2";
+      const out = Buffer.from(b64, "base64");
+      console.log(`gpt-image-2 OK (${Math.round(out.length / 1024)} Ko, essai ${i}, ${size})`);
+      return out;
+    }
+
+    const txt = await res.text();
+    const transient = [429, 500, 502, 503, 529].includes(res.status);
+    console.warn(`gpt-image-2 ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 200)}`);
+    if (transient && i < tries) { await new Promise((r) => setTimeout(r, 20000 * i)); continue; }
+    throw new Error(`gpt-image-2 ${res.status}: ${txt.slice(0, 300)}`);
+  }
+  throw new Error("gpt-image-2 indisponible");
+}
+
+// ============================================================
+// SÉLECTION DU MOTEUR
+// GPT Image 2 d'abord ; toute panne (saturation, modération, réseau)
+// bascule automatiquement sur la chaîne Gemini pro->flash existante.
+// ============================================================
+async function generateImage(args) {
+  if (process.env.OPENAI_API_KEY) {
+    try { return await openaiImage(args); }
+    catch (e) { console.warn(`gpt-image-2 KO -> secours Gemini : ${String(e.message ?? e).slice(0, 160)}`); }
+  }
+  return geminiImage(args);
+}
+
 // ============================================================
 // JUGE (conformité + note design /10) — Anthropic
 // ============================================================
@@ -354,7 +443,7 @@ async function produceJob(posterId) {
     }
 
     // ---- Tentative 1 -> contrôle -> (retry) -> livraison ----
-    const buf1 = await geminiImage({ prompt, refImages, aspectRatio: aspect });
+    const buf1 = await generateImage({ prompt, refImages, aspectRatio: aspect });
     await supabase.from("posters").update({ status: "checking" }).eq("id", poster.id);
     const check = await visionCheck(buf1, contenu, hasLogo, hasRef);
     if (check.ok && check.note >= 7) {
@@ -364,7 +453,7 @@ async function produceJob(posterId) {
       console.warn(`tentative 1 rejetée (ok=${check.ok}, note=${check.note}): ${check.probleme}`);
       prompt = prompt.slice(0, -2) + `,\n "correction_of_previous_attempt": "PREVIOUS ATTEMPT WAS REJECTED (design score ${check.note}/10). REASON: ${String(check.probleme).replace(/"/g, "'")}. Fix this precisely and raise the design ambition, keep the rest identical."\n}`;
       try {
-        const buf2 = await geminiImage({ prompt, refImages, aspectRatio: aspect });
+        const buf2 = await generateImage({ prompt, refImages, aspectRatio: aspect });
         await livrer(buf2);
         console.log(`✔ poster livré (2e tentative) ${poster.id}`);
       } catch (e) {
@@ -425,7 +514,7 @@ setTimeout(janitor, 90 * 1000);          // au boot, après la fin du chevauchem
 setInterval(janitor, 10 * 60 * 1000);    // puis toutes les 10 min, filet permanent
 
 
-app.get("/health", (_req, res) => res.json({ ok: true, engine: "gemini-orchestrator", models: GEMINI_MODELS }));
+app.get("/health", (_req, res) => res.json({ ok: true, engine: process.env.OPENAI_API_KEY ? "gpt-image-2 (+ secours gemini)" : "gemini-orchestrator", fallback_models: GEMINI_MODELS }));
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Worker Postik (chef d'orchestre) sur :${port}`));
