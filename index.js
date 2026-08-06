@@ -37,6 +37,7 @@ app.use((req, res, next) => {
 // GEMINI (streaming + repli + passages)
 // ============================================================
 const GEMINI_MODELS = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image"];
+let LAST_MODEL = ""; // modèle ayant réellement produit la dernière image (traçabilité pro vs secours)
 const geminiUrl = (model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
@@ -102,6 +103,7 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
             break;
           }
           const out = Buffer.concat(bufs);
+          LAST_MODEL = model;
           console.log(`gemini OK via ${model} (${Math.round(out.length / 1024)} Ko, passage ${sweep})`);
           return out;
         }
@@ -241,6 +243,18 @@ function buildJsonPrompt(g, hasLogo, hasRef, refMode) {
 async function visionCheck(imageBuf, contenu, hasLogo, hasRef) {
   try {
     const b64 = imageBuf.toString("base64");
+    // ZOOM du bas de l'affiche : les petits textes (mentions pratiques) y vivent,
+    // et c'est là que les fautes passent sous le radar quand l'image est vue entière.
+    let zoomB64 = null;
+    try {
+      const meta = await sharp(imageBuf).metadata();
+      const top = Math.round(meta.height * 0.55);
+      const zoom = await sharp(imageBuf)
+        .extract({ left: 0, top, width: meta.width, height: meta.height - top })
+        .resize({ width: Math.min(meta.width * 2, 2000) })
+        .jpeg({ quality: 90 }).toBuffer();
+      zoomB64 = zoom.toString("base64");
+    } catch (e) { console.warn("zoom juge indisponible:", e.message); }
     const attendus = contenu.flatMap((b) => b.items ?? (b.texte ? [b.texte] : []));
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -255,6 +269,7 @@ MISSION 1 — CONFORMITÉ (bloquante, "ok": false si violée) :
 - LISIBILITÉ DES LETTRES : chaque lettre du TITRE doit être sans ambiguïté à première lecture. Un Z stylisé qui se lit 7 (PIZZA lu PI77A), un O qui se lit 0, un I qui se lit 1, un S qui se lit 5 = faute, note maximum 5. Épelle le titre à voix haute comme un passant pressé.
 - CHIFFRES : tout nombre de la liste attendue ABSENT de l'affiche = faute. Un nombre barré doit être l'ANCIEN prix (jamais le nouveau prix, jamais une économie). Un texte dupliqué en écho/fantôme derrière lui-même = faute.
 - Orthographe lettre à lettre : un mot mal orthographié = faute. ATTENTION MAXIMALE aux textes COURBES, en arc ou qui suivent un contour : épelle-les caractère par caractère un doigt à la fois (lettres doublées "AANIMATIONS", lettres manquantes "SNAKING" au lieu de "SNACKING" — ce sont les fautes les plus fréquentes dans ces zones).
+- PETITS TEXTES (mentions pratiques, bas de l'affiche) : c'est LÀ que les fautes se cachent ("sameti" pour "samedi", "intervetion" pour "intervention"). La deuxième image fournie est un ZOOM AGRANDI du bas de l'affiche : épelle CHAQUE mot du zoom, lettre par lettre, en le comparant au mot correspondant de la liste attendue. Un accent faux (è au lieu de ê dans "prêt") = faute. Une lettre manquante ou substituée = faute, ok=false.
 - Un mot COUPÉ sur deux lignes = faute.
 - Lettres déformées/fondues, texte attendu ABSENT, texte coupé par un bord, texte illisible, marge/bordure blanche autour de l'affiche = faute.
 ${hasLogo ? "- LOGO : s'il apparaît, il doit sembler net, cohérent et non déformé. Logo trahi = faute." : ""}
@@ -267,7 +282,8 @@ Note sévèrement : idée forte défendable (2 pts), drame d'échelle du titre (
 Réponds UNIQUEMENT en JSON: {"ok": true|false, "note": 0-10, "probleme": "<vide, ou description courte et ACTIONNABLE>"}`,
         messages: [{ role: "user", content: [
           { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
-          { type: "text", text: `TEXTES ATTENDUS : ${JSON.stringify(attendus)}` },
+          ...(zoomB64 ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: zoomB64 } }] : []),
+          { type: "text", text: `TEXTES ATTENDUS : ${JSON.stringify(attendus)}${zoomB64 ? " (la 2e image est le zoom agrandi du bas de l'affiche : épelle chaque mot)" : ""}` },
         ]}],
       }),
     });
@@ -332,6 +348,9 @@ async function produceJob(posterId) {
       const { error: updErr } = await supabase.from("posters")
         .update({ final_paths: { [key]: path }, status: "ready", error: null }).eq("id", poster.id);
       if (updErr) throw new Error(`update: ${updErr.message}`);
+      // Traçabilité : quel modèle a livré (colonne facultative, échec silencieux si absente)
+      const { error: modelErr } = await supabase.from("posters").update({ model: LAST_MODEL }).eq("id", poster.id);
+      if (modelErr) console.warn("colonne model absente (facultative):", modelErr.message);
     }
 
     // ---- Tentative 1 -> contrôle -> (retry) -> livraison ----
