@@ -265,6 +265,11 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
   // toute la fabrication -> aucune coupure pour inactivité, et l'image payée
   // n'est jamais perdue.
   for (let i = 1; i <= tries; i++) {
+    const t0 = Date.now();
+    const secs = () => Math.round((Date.now() - t0) / 1000);
+    console.log(`gpt-image-2 -> lancement (essai ${i}/${tries}, ${size}, ${refImages.length} réf.)`);
+    // battement de coeur : preuve de vie toutes les 30 s pendant la fabrication
+    const beat = setInterval(() => console.log(`gpt-image-2 … en cours (${secs()} s)`), 30000);
     let res;
     try {
       if (refImages.length) {
@@ -302,12 +307,14 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
         });
       }
     } catch (e) {
-      console.warn(`gpt-image-2 réseau (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)} | cause: ${String(e.cause?.code ?? e.cause ?? "inconnue").slice(0, 120)}`);
+      clearInterval(beat);
+      console.warn(`gpt-image-2 réseau après ${secs()} s (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)} | cause: ${String(e.cause?.code ?? e.cause ?? "inconnue").slice(0, 120)}`);
       if (i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
       throw e;
     }
 
     if (!res.ok) {
+      clearInterval(beat);
       const txt = await res.text();
       const transient = [429, 500, 502, 503, 529].includes(res.status);
       console.warn(`gpt-image-2 ${res.status} (essai ${i}/${tries}): ${txt.slice(0, 200)}`);
@@ -335,11 +342,12 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
           let evt; try { evt = JSON.parse(payload); } catch { continue; }
           const b64 = evt.b64_json ?? evt.data?.[0]?.b64_json;
           if (!b64) continue;
-          if (String(evt.type ?? "").includes("completed")) finalB64 = b64;
-          else { lastPartial = b64; partials++; }
+          if (String(evt.type ?? "").includes("completed")) { finalB64 = b64; console.log(`gpt-image-2 image finale reçue (${secs()} s)`); }
+          else { lastPartial = b64; partials++; console.log(`gpt-image-2 aperçu ${partials} reçu (${secs()} s)`); }
         }
       }
 
+      clearInterval(beat);
       const chosen = finalB64 ?? lastPartial;
       if (!chosen) {
         console.warn(`gpt-image-2: flux sans image (essai ${i}/${tries})`);
@@ -348,10 +356,11 @@ async function openaiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
       }
       LAST_MODEL = "gpt-image-2";
       const out = Buffer.from(chosen, "base64");
-      console.log(`gpt-image-2 OK (${Math.round(out.length / 1024)} Ko, essai ${i}, ${size}, ${partials} aperçu(s)${finalB64 ? ", image finale" : ", APERÇU seulement"})`);
+      console.log(`gpt-image-2 OK en ${secs()} s (${Math.round(out.length / 1024)} Ko, essai ${i}, ${size}, ${partials} aperçu(s)${finalB64 ? ", image finale" : ", APERÇU seulement"})`);
       return out;
     } catch (e) {
-      console.warn(`gpt-image-2 flux interrompu (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)} | cause: ${String(e.cause?.code ?? e.cause ?? "inconnue").slice(0, 120)}`);
+      clearInterval(beat);
+      console.warn(`gpt-image-2 flux interrompu après ${secs()} s (essai ${i}/${tries}): ${String(e.message ?? e).slice(0, 120)} | cause: ${String(e.cause?.code ?? e.cause ?? "inconnue").slice(0, 120)}`);
       if (i < tries) { await new Promise((r) => setTimeout(r, 15000)); continue; }
       throw e;
     }
