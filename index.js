@@ -563,16 +563,25 @@ async function visionCheck(imageBuf, contenu, hasLogo, hasRef) {
     const b64 = imageBuf.toString("base64");
     // ZOOM du bas de l'affiche : les petits textes (mentions pratiques) y vivent,
     // et c'est là que les fautes passent sous le radar quand l'image est vue entière.
-    let zoomB64 = null;
+    // DEUX zooms : le haut (titre et gros chiffres, souvent recouverts par des
+    // éléments de la scène) et le bas (mentions pratiques). Une faute peut vivre
+    // dans l'un comme dans l'autre.
+    let zoomTopB64 = null, zoomB64 = null;
     try {
       const meta = await sharp(imageBuf).metadata();
-      const top = Math.round(meta.height * 0.55);
-      const zoom = await sharp(imageBuf)
-        .extract({ left: 0, top, width: meta.width, height: meta.height - top })
+      const cutTop = Math.round(meta.height * 0.58);
+      const cutBottom = Math.round(meta.height * 0.50);
+      const zTop = await sharp(imageBuf)
+        .extract({ left: 0, top: 0, width: meta.width, height: cutTop })
         .resize({ width: Math.min(meta.width * 2, 2000) })
         .jpeg({ quality: 90 }).toBuffer();
-      zoomB64 = zoom.toString("base64");
-    } catch (e) { console.warn("zoom juge indisponible:", e.message); }
+      zoomTopB64 = zTop.toString("base64");
+      const zBot = await sharp(imageBuf)
+        .extract({ left: 0, top: cutBottom, width: meta.width, height: meta.height - cutBottom })
+        .resize({ width: Math.min(meta.width * 2, 2000) })
+        .jpeg({ quality: 90 }).toBuffer();
+      zoomB64 = zBot.toString("base64");
+    } catch (e) { console.warn("zooms juge indisponibles:", e.message); }
     const attendus = contenu.flatMap((b) => b.items ?? (b.texte ? [b.texte] : []));
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -587,7 +596,8 @@ MISSION 1 — CONFORMITÉ (bloquante, "ok": false si violée) :
 - LISIBILITÉ DES LETTRES : chaque lettre du TITRE doit être sans ambiguïté à première lecture. Un Z stylisé qui se lit 7 (PIZZA lu PI77A), un O qui se lit 0, un I qui se lit 1, un S qui se lit 5 = faute, note maximum 5. Épelle le titre à voix haute comme un passant pressé.
 - CHIFFRES : tout nombre de la liste attendue ABSENT de l'affiche = faute. Un nombre barré doit être l'ANCIEN prix (jamais le nouveau prix, jamais une économie). Un texte dupliqué en écho/fantôme derrière lui-même = faute.
 - Orthographe lettre à lettre : un mot mal orthographié = faute. ATTENTION MAXIMALE aux textes COURBES, en arc ou qui suivent un contour : épelle-les caractère par caractère un doigt à la fois (lettres doublées "AANIMATIONS", lettres manquantes "SNAKING" au lieu de "SNACKING" — ce sont les fautes les plus fréquentes dans ces zones).
-- PETITS TEXTES (mentions pratiques, bas de l'affiche) : c'est LÀ que les fautes se cachent ("sameti" pour "samedi", "intervetion" pour "intervention"). La deuxième image fournie est un ZOOM AGRANDI du bas de l'affiche : épelle CHAQUE mot du zoom, lettre par lettre, en le comparant au mot correspondant de la liste attendue. Un accent faux (è au lieu de ê dans "prêt") = faute. Une lettre manquante ou substituée = faute, ok=false.
+- LE TITRE D'ABORD : la 2e image est un ZOOM du HAUT de l'affiche. Épelle le grand titre et les grands chiffres LETTRE PAR LETTRE, en les comparant au texte attendu, AVANT de regarder le reste. Une lettre en trop ou en moins dans un mot monumental ("OFFFRTES" pour "OFFERTES", "AANIMATIONS" pour "ANIMATIONS") est la faute la plus grave qui soit : ok=false, note maximum 2. Attention quand un élément de la scène recouvre partiellement une lettre : compte les jambages un par un.
+- PETITS TEXTES (mentions pratiques, bas de l'affiche) : la 3e image est un ZOOM du BAS. C'est LÀ aussi que les fautes se cachent ("sameti" pour "samedi", "intervetion" pour "intervention"). Épelle CHAQUE mot de ce zoom, lettre par lettre, en le comparant au mot correspondant de la liste attendue. Un accent faux (è au lieu de ê dans "prêt") = faute. Une lettre manquante ou substituée = faute, ok=false.
 - Un mot COUPÉ sur deux lignes = faute.
 - Lettres déformées/fondues, texte attendu ABSENT, texte coupé par un bord, texte illisible, marge/bordure blanche autour de l'affiche = faute.
 ${hasLogo ? "- LOGO : s'il apparaît, il doit sembler net, cohérent et non déformé. Logo trahi = faute." : ""}
@@ -600,8 +610,9 @@ Note sévèrement : idée forte défendable (2 pts), drame d'échelle du titre (
 Réponds UNIQUEMENT en JSON: {"ok": true|false, "note": 0-10, "probleme": "<vide, ou description courte et ACTIONNABLE>"}`,
         messages: [{ role: "user", content: [
           { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+          ...(zoomTopB64 ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: zoomTopB64 } }] : []),
           ...(zoomB64 ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: zoomB64 } }] : []),
-          { type: "text", text: `TEXTES ATTENDUS : ${JSON.stringify(attendus)}${zoomB64 ? " (la 2e image est le zoom agrandi du bas de l'affiche : épelle chaque mot)" : ""}` },
+          { type: "text", text: `TEXTES ATTENDUS : ${JSON.stringify(attendus)}${zoomTopB64 ? " (2e image = zoom du HAUT : épelle le titre lettre par lettre en premier ; 3e image = zoom du BAS : épelle chaque mention)" : ""}` },
         ]}],
       }),
     });
