@@ -273,7 +273,6 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
     .filter(Boolean).join(" / ");
 
   /* ═══ EN-TÊTE : usage prévu + mode photoréaliste ═══ */
-  p(`High-fidelity, ultra-detailed, sharp and crisp, professionally retouched.`);
   p(`PHOTOREALISTIC ADVERTISING POSTER — intended use: a printed commercial poster for a French local business, to be displayed in a shop window and shared on social media. Quality bar: a 300 € commission from an award-winning European poster studio. Format ${g?.aspect_ratio ?? "4:5"}.`);
   p(`This is a real photograph with studio typography set on top of it. The photograph fills the entire frame, edge to edge, and stays visible behind every block of text — including behind the largest letters. No opaque colour panel, no flat band and no solid column covers any part of the image to host text: legibility comes from the scene's own light, from depth of field, from a translucent veil or from a very gradual darkening.`);
 
@@ -322,7 +321,7 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
 
   /* ═══ 2. LE TEXTE (exigence de design, avec épellation) ═══ */
   p(`\n=== 2. THE TEXT — treat it as a design requirement, not decoration ===`);
-  p(`These strings are FRENCH. Render each one VERBATIM — no extra characters, no substitutions, no abbreviations, no translation — with its exact accents (é è ê à ç ô û), its apostrophes and its spacing. They are the ONLY words on the poster; every element below is rendered EXACTLY ONCE. Sharp, readable typography at every size, including the small print.`);
+  p(`These strings are FRENCH. Render each one VERBATIM — no extra characters, no substitutions, no abbreviations, no translation — with its exact accents (é è ê à ç ô û), its apostrophes and its spacing. They are the ONLY words on the poster; every element below is rendered EXACTLY ONCE. Sharp, readable typography at every size — the small print stays crisp and legible.`);
 
   const line = (label, txt, role) => {
     if (!txt) return;
