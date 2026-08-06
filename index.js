@@ -373,6 +373,39 @@ app.post("/produce", (req, res) => {
   produceJob(poster_id).catch((e) => console.error("produceJob crash:", e));
 });
 
+// ============================================================
+// CONCIERGE : posters orphelins d'un redéploiement
+// ------------------------------------------------------------
+// Un redeploy Railway tue la génération en vol -> le poster reste
+// coincé en generating/checking pour toujours. Au démarrage (après
+// un délai le temps que l'ancien container meure, car les deux se
+// chevauchent pendant un deploy), on marque failed tout poster actif
+// non touché depuis 20 min : le client récupère son bouton Réessayer,
+// sans re-quota. On ne relance PAS automatiquement (risque de double
+// génération pendant le chevauchement des containers).
+// ============================================================
+async function janitor() {
+  try {
+    const cutoff = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const { data: stuck, error } = await supabase.from("posters")
+      .select("id")
+      .in("status", ["generating", "checking"])
+      .lt("updated_at", cutoff);
+    if (error) { console.warn("concierge: lecture impossible,", error.message); return; }
+    for (const p of stuck ?? []) {
+      await supabase.from("posters").update({
+        status: "failed",
+        error: "fabrication interrompue par une mise à jour de l'atelier, relance-la : ton quota n'est débité qu'une fois",
+      }).eq("id", p.id).in("status", ["generating", "checking"]);
+      console.warn(`concierge: poster orphelin marqué failed ${p.id}`);
+    }
+    if ((stuck ?? []).length) console.log(`concierge: ${stuck.length} poster(s) orphelin(s) traité(s)`);
+  } catch (e) { console.warn("concierge:", e.message ?? e); }
+}
+setTimeout(janitor, 90 * 1000);          // au boot, après la fin du chevauchement de deploy
+setInterval(janitor, 10 * 60 * 1000);    // puis toutes les 10 min, filet permanent
+
+
 app.get("/health", (_req, res) => res.json({ ok: true, engine: "gemini-orchestrator", models: GEMINI_MODELS }));
 
 const port = process.env.PORT || 3000;
