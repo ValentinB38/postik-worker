@@ -290,13 +290,11 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   if (sign) lines.push(`• SIGNATURE — « ${sign} » — discrète, en pied d'affiche.`);
 
   p(`COMMANDE : une affiche publicitaire française finie, prête à imprimer, format ${g?.aspect_ratio ?? "4:5"}. Niveau attendu : une commande à 300 € dans un studio d'affiches européen primé. Tu es le directeur artistique ET l'exécutant : tu conçois la mise en page, puis tu la rends.`);
-  p(`\n=== 1. LE TEXTE DE L'AFFICHE (la partie la plus importante de cette commande) ===`);
-  p(`Ces textes sont en FRANÇAIS et sont recopiés caractère par caractère, avec leurs accents exacts (é è ê à ç ô û), leurs apostrophes et leurs espaces. Ce sont les SEULS mots visibles sur l'affiche : chaque mot que tu écris provient de cette liste, et chaque élément de cette liste apparaît exactement une fois.`);
-  lines.forEach((l) => p(l));
-  p(`Vérifie chaque mot lettre par lettre avant de rendre, en particulier les petits textes du bas : c'est là que les fautes se glissent. Les lettres de chaque mot sont sans ambiguïté à la lecture (un Z se lit Z et jamais 7, un O se lit O et jamais 0, un I se lit I et jamais 1).`);
+  p(`\nNATURE DE L'IMAGE — À LIRE EN PREMIER : cette affiche est AVANT TOUT UNE VRAIE PHOTOGRAPHIE, sur laquelle une typographie de studio est ensuite posée. La photographie occupe la TOTALITÉ du cadre, bord à bord, du haut jusqu'en bas : elle est le sol de l'affiche, jamais une vignette placée dans un coin ni une moitié de l'image. Le texte se pose SUR cette photographie — dans ses zones naturellement sombres ou calmes, ou en passant devant et derrière les objets — et la photographie reste visible et lisible partout, y compris derrière les plus grandes lettres. Aucun aplat de couleur opaque ne vient recouvrir une partie de l'image pour y loger du texte ; si le texte a besoin de lisibilité, cela se règle par la lumière de la scène, la profondeur de champ ou un assombrissement très progressif, jamais par un panneau plein.`);
+  p(`\n=== 1. LA PHOTOGRAPHIE (le socle de l'affiche) ===`);
 
   /* ---------- 2. LA SCÈNE ---------- */
-  p(`\n=== 2. LA SCÈNE PHOTOGRAPHIQUE ===`);
+  // (section 1 : la photographie — l'en-tête est écrit plus haut)
   if (isFond) {
     p(`La photo fournie EST la scène de l'affiche. Tu conserves son contenu, son lieu et son identité parfaitement reconnaissables. Tu as le droit d'en retravailler les couleurs, d'en dramatiser la lumière et de la recadrer au format. Tu composes la typographie SUR et AUTOUR de cette photo.`);
   } else if (hasRef) {
@@ -312,7 +310,7 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
     if (e.foreground) p(`Premier plan : ${e.foreground}`);
     if (e.midground) p(`Plan moyen : ${e.midground}`);
     if (e.background) p(`Arrière-plan : ${e.background}`);
-    if (e.calm_zone) p(`Zone calme réservée à la typographie : ${e.calm_zone}`);
+    if (e.calm_zone) p(`Zone naturellement calme de la photographie, où le texte pourra se poser sans rien recouvrir (cette zone reste une partie de l'image, avec sa matière et sa profondeur) : ${e.calm_zone}`);
   }
   if (sc.lighting) {
     const li = sc.lighting;
@@ -326,9 +324,16 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
     const cg = sc.color_grading;
     p(`Étalonnage : ${[cg.look, cg.palette_ratio, (cg.textures ?? []).join(", ")].filter(Boolean).join(" — ")}`);
   }
-  p(`L'image doit avoir été PHOTOGRAPHIÉE par un humain : grain argentique visible, matières tactiles, imperfections vivantes. Aucune lettre, aucun mot, aucune enseigne lisible n'apparaît dans le décor lui-même : tout le texte de l'affiche est posé par toi, en typographie.`);
+  p(`RÉALISME PHOTOGRAPHIQUE — exigence non négociable : real photograph, shot on a full-frame camera with a fast prime lens, natural depth of field with real optical falloff, true-to-life skin texture and material response, visible fine film grain, micro-contrast, subtle lens vignetting and chromatic aberration, real dust and wear, believable shadows with soft ambient occlusion. Photojournalistic honesty: this must look like a frame captured in a real place, not an illustration, not a 3D render, not flat vector art, not a composited studio cut-out.`);
+  p(`La profondeur est réelle : premier plan, sujet et arrière-plan occupent des distances différentes, avec une vraie mise au point sélective. La lumière vient de sources visibles ou plausibles dans le lieu.`);
+  p(`Aucune lettre, aucun mot, aucune enseigne lisible n'apparaît dans le décor photographié lui-même : tout le texte de l'affiche est posé par toi, en typographie.`);
 
   /* ---------- 3. LA TYPOGRAPHIE ---------- */
+  p(`\n=== 2. LE TEXTE DE L'AFFICHE (aucun autre mot ne doit apparaître) ===`);
+  p(`Ces textes sont en FRANÇAIS et sont recopiés caractère par caractère, avec leurs accents exacts (é è ê à ç ô û), leurs apostrophes et leurs espaces. Ce sont les SEULS mots visibles sur l'affiche : chaque mot que tu écris provient de cette liste, et chaque élément de cette liste apparaît exactement une fois.`);
+  lines.forEach((l) => p(l));
+  p(`Vérifie chaque mot lettre par lettre avant de rendre, en particulier les petits textes du bas : c'est là que les fautes se glissent. Les lettres de chaque mot sont sans ambiguïté à la lecture (un Z se lit Z et jamais 7, un O se lit O et jamais 0, un I se lit I et jamais 1).`);
+
   p(`\n=== 3. LA TYPOGRAPHIE ===`);
   if (ty.archetype) p(`Parti pris de composition : ${ty.archetype}`);
   if (ty.display_font_character) p(`Caractère de la police d'affichage : ${ty.display_font_character}`);
@@ -347,7 +352,7 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   /* ---------- 4. COMPOSITION CHIFFRÉE ---------- */
   p(`\n=== 4. COMPOSITION ET PARCOURS DE L'ŒIL ===`);
   if (ty.reading_path) p(`Parcours de lecture à construire, dans cet ordre : ${ty.reading_path}. Chaque étape est visuellement évidente.`);
-  p(`Le bloc dominant (titre ou chiffre héros) occupe 40 à 70 % de la surface de l'affiche et forme UNE masse composée, avec un vide intentionnel autour. Les informations secondaires occupent une bande claire, en général en pied d'affiche, hiérarchisées entre elles.`);
+  p(`Le bloc dominant (titre ou chiffre héros) s'étend sur 40 à 70 % de la LARGEUR de l'affiche et forme UNE masse composée, posée sur la photographie. Il s'agit d'une échelle de lettres, pas d'une surface à remplir : la photographie continue d'exister derrière et autour de lui, et respire dans les vides de la composition. Les informations secondaires occupent une bande discrète, en général en pied d'affiche, hiérarchisées entre elles.`);
   if (Array.isArray(ty.layout_zones)) {
     ty.layout_zones.forEach((z) => {
       if (z?.zone) p(`Zone ${z.zone} : ${[z.content, z.scale, z.alignment, z.anchored_to && "calé sur " + z.anchored_to].filter(Boolean).join(" — ")}`);
@@ -377,6 +382,7 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   p(`3) Aucun mot ne figure sur l'affiche s'il n'est pas dans la section 1 — ni slogan ajouté, ni mention inventée, ni étiquette de cette commande (les mots « titre », « sous-titre », « info », « zone » ne sont pas du contenu).`);
   p(`4) Aucun mot n'est coupé entre deux lignes, aucun texte n'est tronqué par un bord, aucun texte n'est écrit deux fois.`);
   p(`5) La composition est une idée de directeur artistique défendable devant un client, pas un empilement de lignes de même taille dans un coin.`);
+  p(`6) L'image finale ressemble à une VRAIE PHOTOGRAPHIE occupant tout le cadre, avec sa profondeur et sa matière — et non à un fond plat, à une illustration ou à une photo reléguée sur une moitié de l'affiche.`);
   return L.join("\n");
 }
 
