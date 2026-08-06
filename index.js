@@ -265,144 +265,152 @@ function buildProsePrompt(g, hasLogo, hasRef, refMode) {
   const L = [];
   const p = (x) => L.push(x);
 
-  /* ---------- 1. LE TEXTE, ISOLÉ EN PREMIER ---------- */
-  const lines = [];
-  const titre = get("titre")?.texte;
-  if (titre) lines.push(`• TITRE — « ${titre} » — le bloc typographique monumental, une seule encre, chaque mot entier (jamais coupé ni tiré à la ligne au milieu d'un mot).`);
-  const accroche = get("accroche")?.texte;
-  if (accroche) lines.push(`• SOUS-TITRE — « ${accroche} » — nettement plus petit que le titre, il le complète sans le répéter.`);
-  const dt = get("datetime")?.texte;
-  if (dt) lines.push(`• DATE ET HEURE — « ${dt} » — traité comme une information forte et lisible de loin, sur une seule ligne.`);
-  const pastille = get("pastille")?.texte;
-  const promo = pastille?.match(/^\s*(.+?)\s*(?:->|→)\s*(.+?)\s*$/);
-  if (promo) {
-    lines.push(`• ANCIEN PRIX — « ${promo[1]} » — de taille moyenne, dans une encre sourde, traversé par UN seul trait net et droit : c'est visiblement le prix d'avant.`);
-    lines.push(`• NOUVEAU PRIX — « ${promo[2]} » — LE HÉROS de l'affiche : parmi les deux plus grands éléments, dans une encre forte, mis en scène comme un événement graphique. Il n'est jamais barré, jamais entouré d'un autre prix, et n'apparaît qu'UNE seule fois sur toute l'affiche.`);
-  } else if (pastille) {
-    lines.push(`• ÉLÉMENT CHOC — « ${pastille} » — l'argument de vente, mis en scène comme un événement graphique. Aucun chiffre n'est barré ici.`);
-  }
-  for (const it of (get("infos")?.items ?? [])) lines.push(`• INFO — « ${it} » — petit corps, groupé avec les autres informations pratiques, parfaitement lisible.`);
-  const cta = get("cta")?.texte;
-  if (cta) lines.push(`• APPEL À L'ACTION — « ${cta} ».`);
-  const contact = get("contact")?.texte;
-  if (contact) lines.push(`• CONTACT — « ${contact} » — petit corps, chiffres parfaitement formés et espacés, chaque chiffre exactement dans cet ordre.`);
-  const sign = get("signature")?.texte;
-  if (sign) lines.push(`• SIGNATURE — « ${sign} » — discrète, en pied d'affiche.`);
+  // Épellation lettre par lettre : recommandation officielle OpenAI pour la
+  // précision des caractères sur les mots délicats (corrige "OFFFRTES").
+  const spell = (txt) => (txt || "")
+    .split(/(\s+)/)
+    .map((w) => (w.trim().length >= 4 ? w.trim().split("").join("-") : w.trim()))
+    .filter(Boolean).join(" / ");
 
-  p(`COMMANDE : une affiche publicitaire française finie, prête à imprimer, format ${g?.aspect_ratio ?? "4:5"}. Niveau attendu : une commande à 300 € dans un studio d'affiches européen primé. Tu es le directeur artistique ET l'exécutant : tu conçois la mise en page, puis tu la rends.`);
-  p(`\nNATURE DE L'IMAGE — À LIRE EN PREMIER : cette affiche est AVANT TOUT UNE VRAIE PHOTOGRAPHIE, sur laquelle une typographie de studio est ensuite posée. La photographie occupe la TOTALITÉ du cadre, bord à bord, du haut jusqu'en bas : elle est le sol de l'affiche, jamais une vignette placée dans un coin ni une moitié de l'image. Le texte se pose SUR cette photographie — dans ses zones naturellement sombres ou calmes, ou en passant devant et derrière les objets — et la photographie reste visible et lisible partout, y compris derrière les plus grandes lettres. Aucun aplat de couleur opaque ne vient recouvrir une partie de l'image pour y loger du texte ; si le texte a besoin de lisibilité, cela se règle par la lumière de la scène, la profondeur de champ ou un assombrissement très progressif, jamais par un panneau plein.`);
-  p(`\n=== 1. LA PHOTOGRAPHIE (le socle de l'affiche) ===`);
+  /* ═══ EN-TÊTE : usage prévu + mode photoréaliste ═══ */
+  p(`High-fidelity, ultra-detailed, sharp and crisp, professionally retouched.`);
+  p(`PHOTOREALISTIC ADVERTISING POSTER — intended use: a printed commercial poster for a French local business, to be displayed in a shop window and shared on social media. Quality bar: a 300 € commission from an award-winning European poster studio. Format ${g?.aspect_ratio ?? "4:5"}.`);
+  p(`This is a real photograph with studio typography set on top of it. The photograph fills the entire frame, edge to edge, and stays visible behind every block of text — including behind the largest letters. No opaque colour panel, no flat band and no solid column covers any part of the image to host text: legibility comes from the scene's own light, from depth of field, from a translucent veil or from a very gradual darkening.`);
 
-  /* ---------- 2. LA SCÈNE ---------- */
-  // (section 1 : la photographie — l'en-tête est écrit plus haut)
+  /* ═══ 1. LA PHOTOGRAPHIE (scène d'abord — ordre officiel) ═══ */
+  p(`\n=== 1. THE PHOTOGRAPH ===`);
+  p(`Photorealistic. A real photograph, captured in the moment by a human photographer — not an illustration, not a 3D render, not flat vector art, not a composited studio cut-out.`);
   if (isFond) {
-    p(`La photo fournie EST la scène de l'affiche. Tu conserves son contenu, son lieu et son identité parfaitement reconnaissables. Tu as le droit d'en retravailler les couleurs, d'en dramatiser la lumière et de la recadrer au format. Tu composes la typographie SUR et AUTOUR de cette photo.`);
+    p(`Image 1 (provided) IS the scene of this poster. Keep its content, its place and its identity perfectly recognisable. You may regrade its colours, dramatise its light and recrop it to format. Compose the typography on and around this photograph.`);
   } else if (hasRef) {
-    p(`Le produit fourni est reproduit exactement : sa forme, ses matières, ses coutures, ses couleurs, ses détails réels. Tu le mets en scène, tu le ré-éclaires, tu dramatises le décor autour de lui, mais il reste ce produit-là, avec ses couleurs réelles.`);
+    p(`Image 1 (provided) is the client's actual product: reproduce it exactly — same shape, same materials, same stitching, same real colours, same details. Stage it, relight it, dramatise the set around it, but it stays that exact product.`);
   }
-  if (sc.concept) p(`Concept : ${sc.concept}`);
-  if (sc.setting) p(`Lieu : ${sc.setting}`);
-  if (sc.mood) p(`Atmosphère : ${sc.mood}`);
-  if (sc.time_of_day) p(`Moment : ${sc.time_of_day}`);
-  if (sc.hero_detail) p(`Détail-vérité qui rend la scène crédible : ${sc.hero_detail}`);
+  if (sc.concept) p(`Concept: ${sc.concept}`);
+  if (sc.subject) p(`Subject (the focal point): ${sc.subject}`);
+  if (sc.setting) p(`Location: ${sc.setting}`);
+  if (sc.mood) p(`Mood: ${sc.mood}`);
+  if (sc.time_of_day) p(`Time of day: ${sc.time_of_day}`);
+  if (sc.hero_detail) p(`The one true detail that makes the frame believable: ${sc.hero_detail}`);
   if (sc.environment) {
     const e = sc.environment;
-    if (e.foreground) p(`Premier plan : ${e.foreground}`);
-    if (e.midground) p(`Plan moyen : ${e.midground}`);
-    if (e.background) p(`Arrière-plan : ${e.background}`);
-    if (e.calm_zone) p(`Zone naturellement calme de la photographie, où le texte pourra se poser sans rien recouvrir (cette zone reste une partie de l'image, avec sa matière et sa profondeur) : ${e.calm_zone}`);
+    if (e.foreground) p(`Foreground: ${e.foreground}`);
+    if (e.midground) p(`Midground: ${e.midground}`);
+    if (e.background) p(`Background: ${e.background}`);
+    if (e.calm_zone) p(`Naturally calm area of the photograph where type can sit without covering anything (this area is still part of the image, with its own texture and depth): ${e.calm_zone}`);
   }
   if (sc.lighting) {
     const li = sc.lighting;
-    p(`Lumière : ${[li.type, li.direction, li.quality, li.signature_effect].filter(Boolean).join(" — ")}`);
-  }
-  if (sc.camera) {
-    const c = sc.camera;
-    p(`Prise de vue : ${[c.lens, c.aperture, c.angle, c.depth_of_field, c.framing].filter(Boolean).join(" — ")}`);
-  }
-  if (sc.color_grading) {
-    const cg = sc.color_grading;
-    p(`Étalonnage : ${[cg.look, cg.palette_ratio, (cg.textures ?? []).join(", ")].filter(Boolean).join(" — ")}`);
+    p(`Light: ${[li.type, li.direction, li.quality, li.signature_effect].filter(Boolean).join(" — ")}`);
   }
   if (Array.isArray(sc.materials_physics) && sc.materials_physics.length) {
-    p(`Comportement de la lumière sur les matières (c'est ce qui rend une image crédible) :`);
-    sc.materials_physics.forEach((m) => p(`— ${m}`));
+    p(`How that light behaves on the materials — this is what makes an image believable:`);
+    sc.materials_physics.forEach((m) => p(`• ${m}`));
   }
-  if (sc.atmosphere) p(`Matière atmosphérique qui donne du volume à la scène : ${sc.atmosphere}`);
-  if (sc.optical_signature) p(`Signature optique assumée de l'objectif : ${sc.optical_signature}`);
-  if (sc.post_production) p(`Étalonnage et retouche finale : ${sc.post_production}`);
-  p(`Quelqu'un qui découvre cette affiche dans la rue doit croire qu'une équipe a fait un vrai shooting pour ce commerce, puis qu'un studio a composé la typographie par-dessus. Jamais une image générée, jamais un montage.`);
-  p(`RÉALISME PHOTOGRAPHIQUE — exigence non négociable : real photograph, shot on a full-frame camera with a fast prime lens, natural depth of field with real optical falloff, true-to-life skin texture and material response, visible fine film grain, micro-contrast, subtle lens vignetting and chromatic aberration, real dust and wear, believable shadows with soft ambient occlusion. Photojournalistic honesty: this must look like a frame captured in a real place, not an illustration, not a 3D render, not flat vector art, not a composited studio cut-out.`);
-  p(`La profondeur est réelle : premier plan, sujet et arrière-plan occupent des distances différentes, avec une vraie mise au point sélective. La lumière vient de sources visibles ou plausibles dans le lieu.`);
-  p(`Aucune lettre, aucun mot, aucune enseigne lisible n'apparaît dans le décor photographié lui-même : tout le texte de l'affiche est posé par toi, en typographie.`);
+  if (sc.atmosphere) p(`Volumetric atmosphere giving the frame depth: ${sc.atmosphere}`);
+  if (sc.camera) {
+    const c = sc.camera;
+    p(`Shot: ${[c.lens, c.aperture, c.angle, c.depth_of_field, c.framing].filter(Boolean).join(" — ")} (use this for the overall look and framing, not as an exact physical simulation)`);
+  }
+  if (sc.optical_signature) p(`Assumed lens imperfections: ${sc.optical_signature}`);
+  if (sc.color_grading) {
+    const cg = sc.color_grading;
+    p(`Grade: ${[cg.look, cg.palette_ratio, (cg.textures ?? []).join(", ")].filter(Boolean).join(" — ")}`);
+  }
+  if (sc.post_production) p(`Retouching: ${sc.post_production}`);
+  p(`Real texture everywhere: skin pores and lines, fabric wear, worn paint, dust, fingerprints, grease, crumbs, condensation — the honest imperfections of a real place. Real depth: foreground, subject and background sit at genuinely different distances with true selective focus. Nothing staged, nothing glamorised, no heavy retouching, no glossy studio polish.`);
+  p(`No letters, no words and no readable signage appear inside the photographed scene itself: all the poster's text is set by you, as typography.`);
 
-  /* ---------- 3. LA TYPOGRAPHIE ---------- */
-  p(`\n=== 2. LE TEXTE DE L'AFFICHE (aucun autre mot ne doit apparaître) ===`);
-  p(`Ces textes sont en FRANÇAIS et sont recopiés caractère par caractère, avec leurs accents exacts (é è ê à ç ô û), leurs apostrophes et leurs espaces. Ce sont les SEULS mots visibles sur l'affiche : chaque mot que tu écris provient de cette liste, et chaque élément de cette liste apparaît exactement une fois.`);
-  lines.forEach((l) => p(l));
-  p(`Vérifie chaque mot lettre par lettre avant de rendre, en particulier les petits textes du bas : c'est là que les fautes se glissent. Les lettres de chaque mot sont sans ambiguïté à la lecture (un Z se lit Z et jamais 7, un O se lit O et jamais 0, un I se lit I et jamais 1).`);
+  /* ═══ 2. LE TEXTE (exigence de design, avec épellation) ═══ */
+  p(`\n=== 2. THE TEXT — treat it as a design requirement, not decoration ===`);
+  p(`These strings are FRENCH. Render each one VERBATIM — no extra characters, no substitutions, no abbreviations, no translation — with its exact accents (é è ê à ç ô û), its apostrophes and its spacing. They are the ONLY words on the poster; every element below is rendered EXACTLY ONCE. Sharp, readable typography at every size, including the small print.`);
 
-  p(`\n=== 3. LA TYPOGRAPHIE ===`);
-  if (ty.archetype) p(`Parti pris de composition : ${ty.archetype}. Ce parti pris décrit la façon dont la TYPOGRAPHIE s'organise sur la photographie ; il ne divise jamais l'affiche en panneaux, colonnes pleines ou bandes de couleur unie.`);
-  if (ty.display_font_character) p(`Caractère de la police d'affichage : ${ty.display_font_character}`);
-  if (ty.secondary_font_character) p(`Police secondaire : ${ty.secondary_font_character}`);
-  p(`Exactement DEUX familles de caractères sur toute l'affiche, et TROIS tailles de texte : une taille d'affichage monumentale, une taille intermédiaire, une petite taille.`);
-  p(`Contraste d'échelle : le titre est 8 à 12 fois plus grand que les petits textes. S'il paraît confortable, c'est qu'il est trop petit.`);
-  if (ty.title_ink) p(`Encre du titre : ${ty.title_ink} — le titre entier dans cette seule encre.`);
-  if (ty.accent) p(`Accent : ${ty.accent}`);
-  if (ty.numerals_treatment) p(`Traitement des chiffres : ${ty.numerals_treatment}`);
-  if (ty.signature_treatment) p(`Traitement signature (un seul sur l'affiche) : ${ty.signature_treatment}`);
-  if (ty.human_touch) p(`Touche humaine subtile : ${ty.human_touch}`);
-  if (ty.typo_image_interaction) p(`INTERACTION OBLIGATOIRE entre typo et image : ${ty.typo_image_interaction}`);
-  p(`Micro-typographie : interlignage serré de 0,85 à 0,95 sur les lignes d'affichage empilées ; approche légèrement resserrée sur les capitales condensées et ouverte de 6 à 12 % sur les petites capitales ; crénage optique sur le titre ; une seule unité d'espacement gouverne toutes les marges et tous les intervalles ; vraies apostrophes typographiques, espace fine avant % et :, tiret demi-cadratin pour les plages de nombres.`);
-  p(`Les lettres sont posées en encre pleine et plate : leur couleur est unie sur toute la surface de chaque lettre, leurs contours sont nets, et chaque texte est rendu une seule fois, à un seul endroit.`);
+  const line = (label, txt, role) => {
+    if (!txt) return;
+    p(`• ${label}: "${txt}"`);
+    p(`  spelling, letter by letter: ${spell(txt)}`);
+    if (role) p(`  role: ${role}`);
+  };
+  line("TITLE", get("titre")?.texte, "the monumental type block, one single ink, every word whole — never hyphenated or broken across lines.");
+  line("SUBHEAD", get("accroche")?.texte, "clearly smaller than the title; it completes the title without repeating it.");
+  line("DATE", get("datetime")?.texte, "a strong, far-legible block on a single line.");
+  const pastille = get("pastille")?.texte;
+  const promo = pastille?.match(/^\s*(.+?)\s*(?:->|→)\s*(.+?)\s*$/);
+  if (promo) {
+    line("OLD PRICE", promo[1], "medium size, muted ink, crossed by ONE single clean straight rule — visibly the previous price. It stays perfectly readable through the rule.");
+    line("NEW PRICE", promo[2], "THE HERO of the poster: among the two largest elements, strong ink, staged as a graphic event. Never struck through, never circled by another price, and appearing ONCE on the whole poster.");
+  } else if (pastille) {
+    line("KEY CLAIM", pastille, "the selling argument, staged as a graphic event. No figure is struck through here.");
+  }
+  for (const it of (get("infos")?.items ?? [])) line("INFO", it, "small size, grouped with the other practical information, perfectly legible.");
+  line("CALL TO ACTION", get("cta")?.texte, null);
+  line("CONTACT", get("contact")?.texte, "small size, digits perfectly formed and spaced, in exactly this order.");
+  line("SIGNATURE", get("signature")?.texte, "discreet, at the foot of the poster.");
+  p(`Before rendering, spell every word above letter by letter against the list — especially in the largest type, where a doubled or missing letter is most visible, and in the small print at the bottom, where mistakes hide. Every glyph is unambiguous: a Z reads Z and never 7, an O reads O and never 0, an I reads I and never 1.`);
+
+  /* ═══ 3. TYPOGRAPHIE ═══ */
+  p(`\n=== 3. TYPOGRAPHY ===`);
+  if (ty.archetype) p(`Compositional idea: ${ty.archetype}. This describes how the TYPE is organised on the photograph; it never divides the poster into panels, solid columns or bands of flat colour.`);
+  if (ty.display_font_character) p(`Display typeface character: ${ty.display_font_character}`);
+  if (ty.secondary_font_character) p(`Secondary typeface: ${ty.secondary_font_character}`);
+  p(`Exactly TWO type families and THREE text sizes on the whole poster: one monumental display size, one intermediate, one small.`);
+  p(`Scale contrast: the title is 8 to 12 times larger than the small print. If it looks comfortable, it is too small.`);
+  if (ty.title_ink) p(`Title ink: ${ty.title_ink} — the entire title in this single ink.`);
+  if (ty.accent) p(`Accent: ${ty.accent}`);
+  if (ty.numerals_treatment) p(`Numerals: ${ty.numerals_treatment}`);
+  if (ty.human_touch) p(`Subtle human touch: ${ty.human_touch}`);
+  p(`Micro-typography: tight 0.85–0.95 leading on stacked display lines; slightly tightened tracking on condensed capitals and 6–12 % open tracking on small caps; optical kerning on the title; one single spacing unit governing every margin and gap; true typographic apostrophes, thin space before % and :, en dash for number ranges.`);
+  p(`Letters are set in flat solid ink: each letter's colour is even across its whole surface, edges crisp.`);
   const ti = ty.type_integration;
   if (ti && (ti.occlusion || ti.light_wrap || ti.type_shadow || ti.grain_match)) {
-    p(`\nINTÉGRATION DES LETTRES DANS LA PHOTOGRAPHIE — c'est le geste qui distingue une vraie affiche d'un montage. La typographie appartient physiquement à la scène :`);
-    if (ti.occlusion) p(`— Occlusion : ${ti.occlusion}`);
-    if (ti.light_wrap) p(`— Débord de lumière sur les lettres : ${ti.light_wrap}`);
-    if (ti.type_shadow) p(`— Ombre portée des lettres : ${ti.type_shadow}`);
-    if (ti.grain_match) p(`— Continuité de matière : ${ti.grain_match}`);
-    p(`Ces quatre gestes se combinent : les lettres reçoivent la même lumière, la même poussière et le même grain que la photographie qui les porte.`);
+    p(`TYPE BELONGS TO THE PHOTOGRAPH — the retoucher's gesture that separates a real poster from a paste-up:`);
+    if (ti.occlusion) p(`• Occlusion: ${ti.occlusion}`);
+    if (ti.light_wrap) p(`• Light wrap on the glyph edges: ${ti.light_wrap}`);
+    if (ti.type_shadow) p(`• Shadow cast by the letters: ${ti.type_shadow}`);
+    if (ti.grain_match) p(`• Matching grain: ${ti.grain_match}`);
+    p(`These combine: the letters take the same light, the same dust and the same grain as the photograph carrying them.`);
+  } else if (ty.typo_image_interaction) {
+    p(`MANDATORY type-image interaction: ${ty.typo_image_interaction}`);
   }
-  if (ty.print_finish) p(`Finition d'impression tenue sur toute l'affiche : ${ty.print_finish}`);
+  if (ty.print_finish) p(`Print finish held throughout: ${ty.print_finish}`);
 
-  /* ---------- 4. COMPOSITION CHIFFRÉE ---------- */
-  p(`\n=== 4. COMPOSITION ET PARCOURS DE L'ŒIL ===`);
-  if (ty.reading_path) p(`Parcours de lecture à construire, dans cet ordre : ${ty.reading_path}. Chaque étape est visuellement évidente.`);
-  p(`Le bloc dominant (titre ou chiffre héros) s'étend sur 40 à 70 % de la LARGEUR de l'affiche et forme UNE masse composée, posée sur la photographie. Il s'agit d'une échelle de lettres, pas d'une surface à remplir : la photographie continue d'exister derrière et autour de lui, et respire dans les vides de la composition. Les informations secondaires occupent une bande discrète, en général en pied d'affiche, hiérarchisées entre elles.`);
+  /* ═══ 4. COMPOSITION ═══ */
+  p(`\n=== 4. COMPOSITION AND READING PATH ===`);
+  if (ty.reading_path) p(`Build this reading path, in order: ${ty.reading_path}. Each step is visually obvious.`);
+  p(`The dominant block (title or hero figure) spans 40 to 70 % of the poster's WIDTH and forms ONE composed mass sitting on the photograph — a letter scale, not a surface to fill. The photograph keeps existing behind and around it. Secondary information sits in a discreet band, usually at the foot, hierarchised within itself.`);
   if (Array.isArray(ty.layout_zones)) {
-    p(`Emplacements indicatifs des textes SUR la photographie (ce sont des positions de blocs de lettres posés sur l'image, en aucun cas un découpage de l'affiche en panneaux ou en bandes de couleur ; la photographie continue derrière chacun d'eux) :`);
+    p(`Indicative placements of the text blocks ON the photograph (positions for blocks of letters, never panels or coloured areas — the image continues behind each of them):`);
     ty.layout_zones.forEach((z) => {
-      if (z?.zone) p(`— vers ${z.zone} : ${[z.content, z.scale, z.alignment, z.anchored_to && "calé sur " + z.anchored_to].filter(Boolean).join(" — ")}`);
+      if (z?.zone) p(`• around ${z.zone}: ${[z.content, z.scale, z.alignment, z.anchored_to && "locked to " + z.anchored_to].filter(Boolean).join(" — ")}`);
     });
   }
-  p(`Les lignes de base et les blocs s'alignent sur des lignes réelles de la scène (horizon, arête, direction de la lumière). LA PHOTOGRAPHIE S'ÉTEND D'UN BORD À L'AUTRE DU CADRE, y compris derrière les colonnes de texte et sous les plus grandes lettres : à aucun endroit de l'affiche on ne trouve une zone où l'image a disparu au profit d'une couleur unie. Tout le texte est entièrement à l'intérieur du cadre, avec une marge confortable autour.`);
-  p(`Au maximum DEUX artifices graphiques (filets fins, points repères, une flèche, marques d'angle, un soulignement dessiné à la main), utilisés de façon cohérente comme éléments de la grille.`);
+  p(`Baselines and blocks align to real lines of the scene (horizon, edge, direction of light). All text sits fully inside the frame with a comfortable margin. At most TWO graphic devices (fine rules, register marks, an arrow, corner marks, a hand-drawn underline), used consistently as part of the grid.`);
 
-  /* ---------- 5. COULEUR ---------- */
-  p(`\n=== 5. LA COULEUR ===`);
-  p(`Palette de travail : ${(palette.length ? palette : ["#F5F1E4", "#101114"]).join(", ")}. Répartition 60/30/10.`);
-  p(`Des encres d'imprimerie profondes, légèrement désaturées, prolongeant les tons de la scène. TROIS couleurs de texte au maximum sur toute l'affiche, titre compris.`);
+  /* ═══ 5. COULEUR ═══ */
+  p(`\n=== 5. COLOUR ===`);
+  p(`Working palette: ${(palette.length ? palette : ["#F5F1E4", "#101114"]).join(", ")}. 60/30/10 distribution. Deep, slightly desaturated printing inks extending the tones of the scene. THREE text colours maximum on the whole poster, title included.`);
 
-  /* ---------- 6. RÉFÉRENCES ---------- */
+  /* ═══ 6. ÉLÉMENTS FOURNIS ═══ */
   if (hasLogo || hasRef) {
-    p(`\n=== 6. LES ÉLÉMENTS FOURNIS PAR LE CLIENT ===`);
-    if (hasLogo) p(`Le logo fourni est reproduit à l'identique — mêmes formes, mêmes couleurs, même typographie — et intégré avec goût, de petite taille, dans un angle propre ou sur une petite plaque qui appartient à la mise en page. Il apparaît une seule fois.`);
-    if (hasRef && !isFond) p(`Le produit fourni garde son apparence réelle exacte dans la composition finale.`);
-    if (isFond) p(`La photo fournie reste reconnaissable comme le lieu du client dans l'affiche finale.`);
+    p(`\n=== 6. CLIENT-PROVIDED IMAGES ===`);
+    if (hasRef && hasLogo) p(`Image 1: the client's photograph (used as described in section 1). Image 2: the client's logo.`);
+    else if (hasLogo) p(`Image 1: the client's logo.`);
+    if (hasLogo) p(`Reproduce the logo identically — same shapes, same colours, same lettering — and integrate it tastefully at small size, in a clean corner or on a small plate that belongs to the layout. It appears exactly once. Do not redraw it, do not restyle it, do not add a white box around it if its background is transparent: sit it directly on the photograph.`);
   }
 
-  /* ---------- 7. VÉRIFICATION FINALE ---------- */
-  p(`\n=== ${hasLogo || hasRef ? 7 : 6}. VÉRIFICATION AVANT DE RENDRE ===`);
-  p(`Avant de produire l'image, relis ta composition point par point :`);
-  p(`1) Chaque texte de la section 1 est présent, orthographié exactement, avec ses accents — épelle mentalement chaque mot, lettre après lettre, y compris dans les petites lignes.`);
-  p(`2) Chaque chiffre est exactement celui donné, dans le même ordre ; aucun nombre n'a été recalculé, arrondi ni reformulé.`);
-  p(`3) Aucun mot ne figure sur l'affiche s'il n'est pas dans la section 1 — ni slogan ajouté, ni mention inventée, ni étiquette de cette commande (les mots « titre », « sous-titre », « info », « zone » ne sont pas du contenu).`);
-  p(`4) Aucun mot n'est coupé entre deux lignes, aucun texte n'est tronqué par un bord, aucun texte n'est écrit deux fois.`);
-  p(`5) La composition est une idée de directeur artistique défendable devant un client, pas un empilement de lignes de même taille dans un coin.`);
-  p(`6) L'image finale ressemble à une VRAIE PHOTOGRAPHIE occupant tout le cadre, avec sa profondeur et sa matière — et non à un fond plat, à une illustration ou à une photo reléguée sur une moitié de l'affiche.`);
-  p(`7) Test du panneau : si tu masques mentalement tout le texte, il reste UNE seule photographie continue qui remplit le format entier. S'il reste une bande ou une moitié de couleur unie, la composition est à refaire.`);
+  /* ═══ 7. CONTRAINTES (recommandation officielle : invariants explicites) ═══ */
+  p(`\n=== 7. CONSTRAINTS ===`);
+  p(`• No watermark, no signature of your own, no UI, no frame, no border, no vignette added around the poster.`);
+  p(`• No text beyond the strings in section 2 — no added slogan, no invented mention, no placeholder or conditional wording ("si fourni", "à compléter", "lorem ipsum"), and none of this brief's own labels ("title", "subhead", "info", "zone" are not content).`);
+  p(`• No brand names, no trademarks and no logos other than the client logo provided.`);
+  p(`• No figure is recalculated, rounded or reworded: every number appears exactly as written in section 2.`);
+  p(`• No word is broken across two lines, no text is clipped by an edge, no string is rendered twice.`);
+
+  /* ═══ 8. VÉRIFICATION FINALE ═══ */
+  p(`\n=== 8. CHECK BEFORE RENDERING ===`);
+  p(`1) Spell every string of section 2 letter by letter against its spelling line, largest type first, then the small print.`);
+  p(`2) Panel test: mentally hide all the text — one single continuous photograph must fill the entire format.`);
+  p(`3) The composition is an art director's idea, defensible in front of a client — not a stack of equal lines in a corner.`);
+  p(`4) The final image reads as a real photograph with real depth and real materials, printed as a poster.`);
   return L.join("\n");
 }
 
