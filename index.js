@@ -54,7 +54,10 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
   };
 
   // Railway n'a pas de limite de temps : on peut être patient partout.
-  const maxSweeps = 2;
+  // Pauses CROISSANTES entre les passages : les pics 503 de Google durent
+  // souvent plusieurs minutes — abandonner après 2 passages et 45s était trop tôt.
+  const SWEEP_PAUSES = [45_000, 120_000, 240_000]; // après les passages 1, 2 et 3
+  const maxSweeps = SWEEP_PAUSES.length + 1;       // 4 passages, ~12-14 min max au pire
 
   for (let sweep = 1; sweep <= maxSweeps; sweep++) {
     for (const model of GEMINI_MODELS) {
@@ -112,8 +115,9 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
       }
     }
     if (sweep < maxSweeps) {
-      console.warn("tous les modèles saturés -> pause 45s puis second passage");
-      await new Promise((r) => setTimeout(r, 45000));
+      const pause = SWEEP_PAUSES[sweep - 1];
+      console.warn(`tous les modèles saturés -> pause ${Math.round(pause / 1000)}s puis passage ${sweep + 1}/${maxSweeps}`);
+      await new Promise((r) => setTimeout(r, pause));
     }
   }
   throw new Error("tous les modèles Gemini sont indisponibles — réessaie dans quelques minutes");
