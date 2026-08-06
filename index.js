@@ -111,7 +111,8 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
         console.warn(`gemini ${model} ${res.status} (essai ${i}/${tries}, passage ${sweep}): ${txt.slice(0, 150)}`);
         if (transient && i < tries) { await new Promise((r) => setTimeout(r, 20000)); continue; }
         if (transient) break;
-        throw new Error(`gemini ${res.status}: ${txt.slice(0, 300)}`);
+        console.error(`gemini ${model} ${res.status} non transitoire: ${txt.slice(0, 300)}`);
+        throw new Error(`souci technique à l'atelier (code ${res.status}), réessaie : ton quota n'est débité qu'une fois`);
       }
     }
     if (sweep < maxSweeps) {
@@ -120,7 +121,7 @@ async function geminiImage({ prompt, refImages = [], aspectRatio = "4:5" }, trie
       await new Promise((r) => setTimeout(r, pause));
     }
   }
-  throw new Error("tous les modèles Gemini sont indisponibles — réessaie dans quelques minutes");
+  throw new Error("l'atelier Postik est saturé en ce moment, réessaie dans quelques minutes : ton quota n'est débité qu'une fois");
 }
 
 // ============================================================
